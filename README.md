@@ -1,4 +1,4 @@
-# analises-medicas-clp-backend
+##Para instalar as dependências necessárias:
 
-#Para instalar as dependências necessárias:
+```bash
 pip install -r requirements.txt
