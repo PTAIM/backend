@@ -1,28 +1,15 @@
-# FastAPI e Uvicorn
 fastapi==0.115.0
 uvicorn[standard]==0.31.0
-
-# Banco de Dados e ORM
 sqlalchemy==2.0.35
-psycopg2-binary==2.9.9  # PostgreSQL
-alembic==1.14.0          # Caso precise de migrações 
-
-# Validação e Schemas
+psycopg2-binary==2.9.9
+alembic==1.14.0  
+psycopg==3.2.9
 pydantic==2.9.2
 pydantic-settings==2.3.4
-
-# Autenticação 
-python-jose==3.3.0        # JWT
-passlib[bcrypt]==1.7.4    # hashing de senhas
-
-# Uploads e Arquivos
-python-multipart==0.0.9   # para upload de imagens de exames
-
-# Extras
-#email-validator==2.2.0    # validação de e-mails no cadastro
-python-dotenv==1.0.1      # variáveis de ambiente
-#requests==2.32.3          # se houver chamadas HTTP a serviços externos
-
-# Testes
+python-jose==3.3.0
+passlib[bcrypt]==1.7.4   
+python-multipart==0.0.9
+python-dotenv==1.0.1      
 pytest==8.3.3
 httpx==0.27.0
+
