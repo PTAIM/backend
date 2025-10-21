@@ -26,10 +26,11 @@ from app.gestao_perfis.models import (
     SumarioSaude
 )
 
-# Importar modelos de outras áreas quando forem criados
-# from app.gestao_consultas.models import Consulta, LogProntuario
-# from app.gestao_exames.models import ArenaExame, Laudo, LaudoResultado, ResultadoExame, SolicitacaoExame
-# from app.notificacoes.models import Notificacao, LogNotificacao
+# Importar modelos de gestão de consultas
+from app.gestao_consultas.models import Consulta, LogProntuario
+
+# Importar modelos de gestão de exames
+from app.gestao_exames.models import SolicitacaoExame, ResultadoExame, Laudo
 
 
 def main():
