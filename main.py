@@ -8,16 +8,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, time
 
 from app.core.database import get_db
+from app.core.auth_dependencies import (
+    get_current_user, get_current_active_user, require_medico, 
+    require_paciente, require_admin
+)
 
 # Imports dos schemas
 from app.gestao_perfis.schemas.perfis_schemas import (
-    CadastroUsuarioRequest, LoginRequest, CriarPerfilMedicoRequest,
-    AtualizarPerfilMedicoRequest, CriarEspecialidadeRequest,
+    CadastroUsuarioRequest, LoginRequest, LoginResponse, UsuarioResponse,
+    CriarPerfilMedicoRequest, AtualizarPerfilMedicoRequest, CriarEspecialidadeRequest,
     CriarPerfilPacienteRequest, CriarSumarioSaudeRequest,
     AtualizarSumarioSaudeRequest, AdicionarEspecialidadeRequest
 )
@@ -31,7 +36,9 @@ from app.gestao_exames.schemas.exames_schemas import (
 )
 
 # Imports dos services
+# Importar services
 from app.gestao_perfis.services.auth_service import AuthService
+from app.gestao_perfis.models.usuario import Usuario
 from app.gestao_perfis.services.medico_service import MedicoService, EspecialidadeService
 from app.gestao_perfis.services.paciente_service import PacienteService, SumarioSaudeService
 from app.gestao_consultas.services.agenda_service import AgendaService
@@ -45,7 +52,14 @@ from app.gestao_perfis.models.usuario import TipoUsuario
 from app.gestao_perfis.models.agenda import DiaSemana
 from app.gestao_consultas.models.log_prontuario import TipoEvento
 
-app = FastAPI(title="Sistema de Telemedicina - API Dummy", version="1.0.0")
+app = FastAPI(
+    title="Sistema de Telemedicina", 
+    version="1.0.0",
+    description="API para sistema de telemedicina com autenticação JWT"
+)
+
+# Configurar segurança JWT no Swagger
+security = HTTPBearer()
 
 
 # ==========================================
@@ -70,20 +84,45 @@ def cadastrar_usuario(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/auth/login", tags=["Autenticação"])
+@app.post("/auth/login", tags=["Autenticação"], response_model=LoginResponse)
 def fazer_login(request: LoginRequest, db: Session = Depends(get_db)):
-    """História 1.1: Login de usuário"""
+    """História 1.1: Login de usuário com token JWT"""
     usuario = AuthService.fazer_login(db, request.email, request.senha)
     if not usuario:
         raise HTTPException(status_code=401, detail="Credenciais inválidas")
-    return {"message": "Login bem-sucedido", "usuario": {"id": usuario.id, "nome": usuario.nome, "tipo": usuario.tipo}}
+    
+    # Cria token JWT
+    access_token = AuthService.criar_token_acesso(usuario)
+    
+    return LoginResponse(
+        access_token=access_token,
+        token_type="bearer",
+        usuario=UsuarioResponse(
+            id=usuario.id,
+            nome=usuario.nome,
+            email=usuario.email,
+            tipo=usuario.tipo.value
+        )
+    )
+
+
+@app.get("/auth/me", tags=["Autenticação"], response_model=UsuarioResponse)
+def get_current_user_info(current_user: Usuario = Depends(get_current_user)):
+    """Obter informações do usuário logado"""
+    return UsuarioResponse(
+        id=current_user.id,
+        nome=current_user.nome,
+        email=current_user.email,
+        tipo=current_user.tipo.value
+    )
 
 
 # Feature 2: Perfil do Médico
 @app.post("/medicos/perfil", tags=["Médicos"])
 def criar_perfil_medico(
     request: CriarPerfilMedicoRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_admin)  # Só admin pode criar perfis médicos
 ):
     """História 2.1: Criar perfil do médico"""
     try:
@@ -100,7 +139,8 @@ def criar_perfil_medico(
 def atualizar_perfil_medico(
     usuario_id: int,
     request: AtualizarPerfilMedicoRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)  # Só médicos podem atualizar perfis
 ):
     """História 2.1: Atualizar perfil do médico"""
     try:
@@ -155,7 +195,8 @@ def listar_especialidades(db: Session = Depends(get_db)):
 @app.post("/pacientes/perfil", tags=["Pacientes"])
 def criar_perfil_paciente(
     request: CriarPerfilPacienteRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)  # Usuário deve estar logado
 ):
     """Criar perfil do paciente"""
     try:
@@ -382,7 +423,8 @@ def visualizar_prontuario(
     tipo_evento: Optional[TipoEventoEnum] = None,
     data_inicio: Optional[str] = None,
     data_fim: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)  # Só médicos podem ver prontuários
 ):
     """História 2.1: Visualizar prontuário com filtros"""
     try:

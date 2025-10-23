@@ -160,8 +160,16 @@ class UsuarioResponse(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    message: str
+    access_token: str
+    token_type: str = "bearer"
     usuario: UsuarioResponse
+
+
+class TokenData(BaseModel):
+    """Schema para dados do token JWT"""
+    sub: Optional[str] = None
+    email: Optional[str] = None
+    tipo: Optional[str] = None
 
 
 class MedicoResponse(BaseModel):

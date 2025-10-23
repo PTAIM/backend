@@ -6,8 +6,10 @@ from typing import Optional
 from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 import bcrypt
+from datetime import timedelta
 
 from app.gestao_perfis.models.usuario import Usuario, TipoUsuario
+from app.core.jwt_service import JWTService
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -97,3 +99,19 @@ class AuthService:
     def buscar_usuario_por_email(db: Session, email: str) -> Optional[Usuario]:
         """Busca usuário por email"""
         return db.query(Usuario).filter(Usuario.email == email).first()
+    
+    @staticmethod
+    def criar_token_acesso(usuario: Usuario) -> str:
+        """Cria token JWT para o usuário"""
+        data = {
+            "sub": str(usuario.id),
+            "email": usuario.email,
+            "tipo": usuario.tipo.value,
+            "nome": usuario.nome
+        }
+        return JWTService.create_access_token(data=data)
+    
+    @staticmethod
+    def verificar_token(token: str) -> Optional[dict]:
+        """Verifica se o token é válido"""
+        return JWTService.verify_token(token)
