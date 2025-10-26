@@ -2,7 +2,7 @@
 Schemas Pydantic para Gestão de Exames e Laudos
 """
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
@@ -11,96 +11,123 @@ from enum import Enum
 
 class StatusSolicitacaoEnum(str, Enum):
     """Status da solicitação de exame"""
-    PENDENTE = "pendente"
-    RESULTADO_ENVIADO = "resultado_enviado"
-    EM_ANALISE = "em_analise"
-    LAUDADO = "laudado"
+    AGUARDANDO_RESULTADO = "AGUARDANDO_RESULTADO"
+    RESULTADO_ENVIADO = "RESULTADO_ENVIADO"
+    CANCELADO = "CANCELADO"
 
 
 class StatusLaudoEnum(str, Enum):
     """Status do laudo"""
-    RASCUNHO = "rascunho"
-    FINALIZADO = "finalizado"
-    ENVIADO = "enviado"
+    RASCUNHO = "RASCUNHO"
+    FINALIZADO = "FINALIZADO"
 
 
 # ========== Schemas de Request ==========
 
 class CriarSolicitacaoExameRequest(BaseModel):
-    consulta_id: int = Field(..., description="ID da consulta")
     paciente_id: int = Field(..., description="ID do paciente")
-    medico_id: int = Field(..., description="ID do médico solicitante")
-    tipo_exame: str = Field(..., description="Tipo de exame solicitado")
-    descricao: Optional[str] = Field(None, description="Descrição ou orientações")
+    nome_exame: str = Field(..., description="Nome do exame solicitado")
+    hipotese_diagnostica: Optional[str] = Field(None, description="Hipótese diagnóstica")
+    detalhes_preparo: Optional[str] = Field(None, description="Detalhes de preparo para o exame")
 
     class Config:
         json_schema_extra = {
             "example": {
-                "consulta_id": 1,
                 "paciente_id": 2,
-                "medico_id": 1,
-                "tipo_exame": "Hemograma Completo",
-                "descricao": "Solicito hemograma completo com contagem de plaquetas"
+                "nome_exame": "Hemograma Completo",
+                "hipotese_diagnostica": "Anemia ferropriva",
+                "detalhes_preparo": "Jejum de 12 horas"
             }
         }
 
 
 class EnviarResultadoExameRequest(BaseModel):
-    solicitacao_id: int = Field(..., description="ID da solicitação de exame")
-    arquivo_url: str = Field(..., description="URL/caminho do arquivo")
-    nome_arquivo: str = Field(..., description="Nome do arquivo")
-    observacoes: Optional[str] = Field(None, description="Observações do paciente")
+    codigo_solicitacao: str = Field(..., description="Código UUID da solicitação")
+    data_realizacao: datetime = Field(..., description="Data de realização do exame")
+    nome_laboratorio: str = Field(..., description="Nome do laboratório")
+    observacoes: Optional[str] = Field(None, description="Observações do exame")
+    # arquivos serão tratados separadamente via upload
 
     class Config:
         json_schema_extra = {
             "example": {
-                "solicitacao_id": 1,
-                "arquivo_url": "/uploads/exames/hemograma_2025.pdf",
-                "nome_arquivo": "hemograma_2025.pdf",
+                "codigo_solicitacao": "550e8400-e29b-41d4-a716-446655440000",
+                "data_realizacao": "2025-10-26T10:00:00",
+                "nome_laboratorio": "Laboratório São Lucas",
                 "observacoes": "Exame realizado em jejum de 12h"
             }
         }
 
 
 class CriarLaudoRequest(BaseModel):
-    resultado_exame_id: int = Field(..., description="ID do resultado do exame")
-    medico_id: int = Field(..., description="ID do médico que emite o laudo")
-    achados: str = Field(..., description="Achados clínicos", min_length=10)
-    impressao_diagnostica: str = Field(..., description="Impressão diagnóstica", min_length=10)
-    recomendacoes: Optional[str] = Field(None, description="Recomendações")
+    paciente_id: int = Field(..., description="ID do paciente")
+    titulo: str = Field(..., description="Título do laudo", min_length=3)
+    descricao: str = Field(..., description="Descrição do laudo", min_length=10)
+    exames_ids: List[int] = Field(..., description="Lista de IDs de exames a incluir no laudo")
 
     class Config:
         json_schema_extra = {
             "example": {
-                "resultado_exame_id": 1,
-                "medico_id": 1,
-                "achados": "Hemograma dentro dos padrões de normalidade. Hemácias: 4.5 milhões/mm³",
-                "impressao_diagnostica": "Hemograma normal. Sem alterações significativas.",
-                "recomendacoes": "Manter acompanhamento de rotina anual"
+                "paciente_id": 2,
+                "titulo": "Laudo de Hemograma Completo",
+                "descricao": "Análise detalhada do hemograma apresentando valores dentro dos padrões normais...",
+                "exames_ids": [1, 2]
             }
         }
 
 
 class AtualizarLaudoRequest(BaseModel):
-    achados: Optional[str] = Field(None, description="Achados clínicos")
-    impressao_diagnostica: Optional[str] = Field(None, description="Impressão diagnóstica")
-    recomendacoes: Optional[str] = Field(None, description="Recomendações")
+    titulo: Optional[str] = Field(None, description="Título do laudo")
+    descricao: Optional[str] = Field(None, description="Descrição do laudo")
 
     class Config:
         json_schema_extra = {
             "example": {
-                "achados": "Hemograma atualizado com novos achados",
-                "impressao_diagnostica": "Impressão diagnóstica revisada",
-                "recomendacoes": "Novas recomendações adicionadas"
+                "titulo": "Laudo Atualizado",
+                "descricao": "Descrição atualizada do laudo"
+            }
+        }
+
+
+class AtualizarStatusSolicitacaoRequest(BaseModel):
+    status: StatusSolicitacaoEnum = Field(..., description="Novo status da solicitação")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "CANCELADO"
             }
         }
 
 
 # ========== Schemas de Response ==========
 
+class ExameResponse(BaseModel):
+    id: int
+    solicitacao_id: int
+    codigo_solicitacao: str
+    nome_exame: str
+    data_realizacao: datetime
+    nome_laboratorio: str
+    nome_arquivo: Optional[str]
+    url_arquivo: str
+
+    class Config:
+        from_attributes = True
+
+
 class SolicitacaoExameResponse(BaseModel):
     id: int
-    tipo_exame: str
+    codigo_solicitacao: str
+    paciente_id: int
+    paciente_nome: str
+    paciente_cpf: str
+    medico_id: int
+    medico_nome: str
+    medico_crm: str
+    nome_exame: str
+    hipotese_diagnostica: Optional[str]
+    detalhes_preparo: Optional[str]
     status: str
     data_solicitacao: datetime
 
@@ -108,21 +135,19 @@ class SolicitacaoExameResponse(BaseModel):
         from_attributes = True
 
 
-class ResultadoExameResponse(BaseModel):
-    id: int
-    arquivo_url: str
-    nome_arquivo: str
-    data_upload: datetime
-
-    class Config:
-        from_attributes = True
-
-
 class LaudoResponse(BaseModel):
     id: int
+    paciente_id: int
+    paciente_nome: str
+    paciente_cpf: str
     medico_id: int
+    medico_nome: str
+    medico_crm: str
+    titulo: str
+    descricao: str
     status: str
     data_emissao: datetime
+    exames: List[ExameResponse]
 
     class Config:
         from_attributes = True

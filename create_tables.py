@@ -30,7 +30,7 @@ from app.gestao_perfis.models import (
 from app.gestao_consultas.models import Consulta, LogProntuario
 
 # Importar modelos de gestão de exames
-from app.gestao_exames.models import SolicitacaoExame, ResultadoExame, Laudo
+from app.gestao_exames.models import SolicitacaoExame, ResultadoExame, Laudo, LaudoResultado
 
 
 def main():
