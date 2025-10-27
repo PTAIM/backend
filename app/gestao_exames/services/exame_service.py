@@ -4,6 +4,7 @@ Service para Gestão de Exames
 """
 from typing import List, Optional
 from sqlalchemy.orm import Session
+from datetime import datetime
 
 from app.gestao_exames.models.solicitacao_exame import SolicitacaoExame, StatusSolicitacao
 from app.gestao_exames.models.resultado_exame import ResultadoExame
@@ -16,23 +17,25 @@ class ExameService:
     @staticmethod
     def criar_solicitacao_exame(
         db: Session,
-        consulta_id: int,
         paciente_id: int,
         medico_id: int,
-        tipo_exame: str,
-        descricao: Optional[str] = None
+        nome_exame: str,
+        hipotese_diagnostica: Optional[str] = None,
+        detalhes_preparo: Optional[str] = None,
+        consulta_id: Optional[int] = None
     ) -> SolicitacaoExame:
         """
         História 1.1: Criar solicitação de exame
-        Médico solicita exames a partir de uma consulta
+        Médico solicita exames para um paciente
         """
         nova_solicitacao = SolicitacaoExame(
             consultaId=consulta_id,
             pacienteId=paciente_id,
             medicoSolicitante=medico_id,
-            tipoExame=tipo_exame,
-            descricao=descricao,
-            status=StatusSolicitacao.PENDENTE
+            nomeExame=nome_exame,
+            hipoteseDiagnostica=hipotese_diagnostica,
+            detalhesPreparo=detalhes_preparo,
+            status=StatusSolicitacao.AGUARDANDO_RESULTADO
         )
         
         db.add(nova_solicitacao)
@@ -43,7 +46,7 @@ class ExameService:
         log = LogProntuario(
             pacienteId=paciente_id,
             tipoEvento=TipoEvento.SOLICITACAO_EXAME,
-            descricao=f"Solicitação de exame: {tipo_exame}",
+            descricao=f"Solicitação de exame: {nome_exame}",
             referenciaId=nova_solicitacao.id
         )
         db.add(log)
@@ -54,18 +57,20 @@ class ExameService:
     @staticmethod
     def enviar_resultado_exame(
         db: Session,
-        solicitacao_id: int,
+        codigo_solicitacao: str,
+        data_realizacao: datetime,
+        nome_laboratorio: str,
         arquivo_url: str,
         nome_arquivo: str,
         observacoes: Optional[str] = None
     ) -> ResultadoExame:
         """
-        História 1.2: Paciente faz upload de resultado de exame
-        Paciente envia arquivo com resultado do exame solicitado
+        História 1.2: Funcionário envia resultado de exame
+        Funcionário da clínica faz upload do resultado do exame
         """
-        # Verifica se solicitação existe
+        # Busca solicitação pelo código
         solicitacao = db.query(SolicitacaoExame).filter(
-            SolicitacaoExame.id == solicitacao_id
+            SolicitacaoExame.codigoSolicitacao == codigo_solicitacao
         ).first()
         
         if not solicitacao:
@@ -73,7 +78,9 @@ class ExameService:
         
         # Cria resultado
         novo_resultado = ResultadoExame(
-            solicitacaoId=solicitacao_id,
+            solicitacaoId=solicitacao.id,
+            dataRealizacao=data_realizacao,
+            nomeLaboratorio=nome_laboratorio,
             arquivoUrl=arquivo_url,
             nomeArquivo=nome_arquivo,
             observacoes=observacoes
@@ -91,7 +98,7 @@ class ExameService:
         log = LogProntuario(
             pacienteId=solicitacao.pacienteId,
             tipoEvento=TipoEvento.EXAME,
-            descricao=f"Resultado de exame enviado: {solicitacao.tipoExame}",
+            descricao=f"Resultado de exame enviado: {solicitacao.nomeExame}",
             referenciaId=novo_resultado.id
         )
         db.add(log)
@@ -100,21 +107,39 @@ class ExameService:
         return novo_resultado
     
     @staticmethod
-    def listar_solicitacoes_paciente(db: Session, paciente_id: int) -> List[SolicitacaoExame]:
+    def listar_solicitacoes_paciente(
+        db: Session, 
+        paciente_id: int,
+        status: Optional[StatusSolicitacao] = None
+    ) -> List[SolicitacaoExame]:
         """
         História 1.2: Lista solicitações de exame do paciente
         Paciente visualiza exames solicitados
         """
-        return db.query(SolicitacaoExame).filter(
+        query = db.query(SolicitacaoExame).filter(
             SolicitacaoExame.pacienteId == paciente_id
-        ).order_by(SolicitacaoExame.dataSolicitacao.desc()).all()
+        )
+        
+        if status:
+            query = query.filter(SolicitacaoExame.status == status)
+        
+        return query.order_by(SolicitacaoExame.dataSolicitacao.desc()).all()
     
     @staticmethod
-    def listar_solicitacoes_medico(db: Session, medico_id: int) -> List[SolicitacaoExame]:
+    def listar_solicitacoes_medico(
+        db: Session, 
+        medico_id: int,
+        status: Optional[StatusSolicitacao] = None
+    ) -> List[SolicitacaoExame]:
         """Lista solicitações criadas por um médico"""
-        return db.query(SolicitacaoExame).filter(
+        query = db.query(SolicitacaoExame).filter(
             SolicitacaoExame.medicoSolicitante == medico_id
-        ).order_by(SolicitacaoExame.dataSolicitacao.desc()).all()
+        )
+        
+        if status:
+            query = query.filter(SolicitacaoExame.status == status)
+        
+        return query.order_by(SolicitacaoExame.dataSolicitacao.desc()).all()
     
     @staticmethod
     def buscar_solicitacao_por_id(db: Session, solicitacao_id: int) -> Optional[SolicitacaoExame]:
@@ -122,6 +147,33 @@ class ExameService:
         return db.query(SolicitacaoExame).filter(
             SolicitacaoExame.id == solicitacao_id
         ).first()
+    
+    @staticmethod
+    def buscar_solicitacao_por_codigo(db: Session, codigo: str) -> Optional[SolicitacaoExame]:
+        """Busca solicitação por código"""
+        return db.query(SolicitacaoExame).filter(
+            SolicitacaoExame.codigoSolicitacao == codigo
+        ).first()
+    
+    @staticmethod
+    def atualizar_status_solicitacao(
+        db: Session,
+        solicitacao_id: int,
+        novo_status: StatusSolicitacao
+    ) -> SolicitacaoExame:
+        """Atualiza status de uma solicitação"""
+        solicitacao = db.query(SolicitacaoExame).filter(
+            SolicitacaoExame.id == solicitacao_id
+        ).first()
+        
+        if not solicitacao:
+            raise ValueError("Solicitação não encontrada")
+        
+        solicitacao.status = novo_status
+        db.commit()
+        db.refresh(solicitacao)
+        
+        return solicitacao
     
     @staticmethod
     def buscar_resultados_solicitacao(db: Session, solicitacao_id: int) -> List[ResultadoExame]:

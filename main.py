@@ -32,7 +32,7 @@ from app.gestao_consultas.schemas.consultas_schemas import (
 )
 from app.gestao_exames.schemas.exames_schemas import (
     CriarSolicitacaoExameRequest, EnviarResultadoExameRequest,
-    CriarLaudoRequest, AtualizarLaudoRequest
+    CriarLaudoRequest, AtualizarLaudoRequest, AtualizarStatusSolicitacaoRequest
 )
 
 # Imports dos services
@@ -377,43 +377,176 @@ def finalizar_consulta(
 # ==========================================
 
 # Feature 1: Gestão de Exames
-@app.post("/exames/solicitacoes", tags=["Exames"])
+@app.post("/solicitacoes", tags=["Exames"])
 def criar_solicitacao_exame(
     request: CriarSolicitacaoExameRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)
 ):
     """História 1.1: Criar solicitação de exame"""
     try:
         solicitacao = ExameService.criar_solicitacao_exame(
-            db, request.consulta_id, request.paciente_id, 
-            request.medico_id, request.tipo_exame, request.descricao
+            db, request.paciente_id, current_user.id,
+            request.nome_exame, request.hipotese_diagnostica, request.detalhes_preparo
         )
-        return {"message": "Solicitação criada", "solicitacao_id": solicitacao.id}
+        return {
+            "id": solicitacao.id,
+            "codigo_solicitacao": solicitacao.codigoSolicitacao,
+            "status": solicitacao.status.value
+        }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/exames/resultados", tags=["Exames"])
+@app.get("/solicitacoes", tags=["Exames"])
+def listar_solicitacoes(
+    status: Optional[str] = None,
+    paciente_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)
+):
+    """Listar solicitações com filtros"""
+    try:
+        from app.gestao_exames.models.solicitacao_exame import StatusSolicitacao
+        
+        status_enum = StatusSolicitacao(status) if status else None
+        
+        if paciente_id:
+            solicitacoes = ExameService.listar_solicitacoes_paciente(db, paciente_id, status_enum)
+        else:
+            solicitacoes = ExameService.listar_solicitacoes_medico(db, current_user.id, status_enum)
+        
+        return {
+            "solicitacoes": [
+                {
+                    "id": s.id,
+                    "codigo_solicitacao": s.codigoSolicitacao,
+                    "paciente_id": s.pacienteId,
+                    "paciente_nome": s.paciente.usuario.nome if s.paciente else None,
+                    "paciente_cpf": s.paciente.usuario.cpf if s.paciente else None,
+                    "medico_id": s.medicoSolicitante,
+                    "medico_nome": s.medico.usuario.nome if s.medico else None,
+                    "medico_crm": s.medico.crm if s.medico else None,
+                    "nome_exame": s.nomeExame,
+                    "hipotese_diagnostica": s.hipoteseDiagnostica,
+                    "detalhes_preparo": s.detalhesPreparo,
+                    "status": s.status.value,
+                    "data_solicitacao": s.dataSolicitacao.isoformat()
+                } for s in solicitacoes
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/solicitacoes/{solicitacao_id}", tags=["Exames"])
+def obter_solicitacao(
+    solicitacao_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """Obter detalhes de uma solicitação"""
+    solicitacao = ExameService.buscar_solicitacao_por_id(db, solicitacao_id)
+    
+    if not solicitacao:
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada")
+    
+    return {
+        "id": solicitacao.id,
+        "codigo_solicitacao": solicitacao.codigoSolicitacao,
+        "paciente_id": solicitacao.pacienteId,
+        "paciente_nome": solicitacao.paciente.usuario.nome if solicitacao.paciente else None,
+        "paciente_cpf": solicitacao.paciente.usuario.cpf if solicitacao.paciente else None,
+        "medico_id": solicitacao.medicoSolicitante,
+        "medico_nome": solicitacao.medico.usuario.nome if solicitacao.medico else None,
+        "medico_crm": solicitacao.medico.crm if solicitacao.medico else None,
+        "nome_exame": solicitacao.nomeExame,
+        "hipotese_diagnostica": solicitacao.hipoteseDiagnostica,
+        "detalhes_preparo": solicitacao.detalhesPreparo,
+        "status": solicitacao.status.value,
+        "data_solicitacao": solicitacao.dataSolicitacao.isoformat()
+    }
+
+
+@app.put("/solicitacoes/{solicitacao_id}", tags=["Exames"])
+def atualizar_status_solicitacao(
+    solicitacao_id: int,
+    request: AtualizarStatusSolicitacaoRequest,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)
+):
+    """Atualizar status da solicitação (ex: cancelar)"""
+    try:
+        from app.gestao_exames.models.solicitacao_exame import StatusSolicitacao
+        
+        solicitacao = ExameService.atualizar_status_solicitacao(
+            db, solicitacao_id, StatusSolicitacao(request.status.value)
+        )
+        return {
+            "id": solicitacao.id,
+            "status": solicitacao.status.value
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/resultados", tags=["Exames"])
 def enviar_resultado_exame(
     request: EnviarResultadoExameRequest,
     db: Session = Depends(get_db)
 ):
-    """História 1.2: Paciente envia resultado de exame"""
+    """História 1.2: Funcionário envia resultado de exame"""
     try:
+        # TODO: Handle file upload here - for now assuming arquivo_url is provided
+        arquivo_url = "/uploads/temp.pdf"  # Placeholder
+        nome_arquivo = "resultado.pdf"  # Placeholder
+        
         resultado = ExameService.enviar_resultado_exame(
-            db, request.solicitacao_id, request.arquivo_url, 
-            request.nome_arquivo, request.observacoes
+            db, request.codigo_solicitacao, request.data_realizacao,
+            request.nome_laboratorio, arquivo_url, nome_arquivo, request.observacoes
         )
         return {"message": "Resultado enviado", "resultado_id": resultado.id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/exames/paciente/{paciente_id}", tags=["Exames"])
-def listar_solicitacoes_paciente(paciente_id: int, db: Session = Depends(get_db)):
-    """História 1.2: Listar exames do paciente"""
-    solicitacoes = ExameService.listar_solicitacoes_paciente(db, paciente_id)
-    return {"solicitacoes": [{"id": s.id, "tipo": s.tipoExame, "status": s.status.value} for s in solicitacoes]}
+@app.get("/exames", tags=["Exames"])
+def listar_exames(
+    paciente_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """Listar exames (resultados) com filtros"""
+    try:
+        # Se paciente_id não for fornecido e usuário for paciente, usa o próprio ID
+        if not paciente_id and current_user.tipo.value == "paciente":
+            from app.gestao_perfis.models.paciente import Paciente
+            paciente = db.query(Paciente).filter(Paciente.usuarioId == current_user.id).first()
+            if paciente:
+                paciente_id = paciente.usuarioId
+        
+        if not paciente_id:
+            raise HTTPException(status_code=400, detail="paciente_id é obrigatório")
+        
+        solicitacoes = ExameService.listar_solicitacoes_paciente(db, paciente_id)
+        
+        exames = []
+        for sol in solicitacoes:
+            for resultado in sol.resultados:
+                exames.append({
+                    "id": resultado.id,
+                    "solicitacao_id": sol.id,
+                    "codigo_solicitacao": sol.codigoSolicitacao,
+                    "nome_exame": sol.nomeExame,
+                    "data_realizacao": resultado.dataRealizacao.isoformat(),
+                    "nome_laboratorio": resultado.nomeLaboratorio,
+                    "nome_arquivo": resultado.nomeArquivo,
+                    "url_arquivo": resultado.arquivoUrl
+                })
+        
+        return {"exames": exames}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # Feature 2: Visualização de Prontuário
@@ -464,35 +597,172 @@ def obter_historico_completo(paciente_id: int, db: Session = Depends(get_db)):
 # ÉPICO 4: ANÁLISE, DIAGNÓSTICO E LAUDOS
 # ==========================================
 
-# Feature 1: Fila de Trabalho
-@app.get("/laudos/fila/{medico_id}", tags=["Laudos"])
-def obter_fila_trabalho(medico_id: int, db: Session = Depends(get_db)):
-    """História 1.1: Fila de trabalho / Caixa de entrada"""
-    resultados = LaudoService.obter_fila_trabalho(db, medico_id)
-    return {
-        "resultados_pendentes": [
-            {
-                "id": r.id,
-                "arquivo": r.arquivoUrl,
-                "data_upload": r.dataUpload.isoformat()
-            } for r in resultados
-        ]
-    }
-
-
 # Feature 2: Emissão de Laudo Médico
 @app.post("/laudos", tags=["Laudos"])
 def criar_laudo(
     request: CriarLaudoRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)
 ):
     """História 2.1: Emitir laudo médico"""
     try:
         laudo = LaudoService.criar_laudo(
-            db, request.resultado_exame_id, request.medico_id, 
-            request.achados, request.impressao_diagnostica, request.recomendacoes
+            db, request.paciente_id, current_user.id,
+            request.titulo, request.descricao, request.exames_ids
         )
-        return {"message": "Laudo criado", "laudo_id": laudo.id, "status": laudo.status.value}
+        return {
+            "id": laudo.id,
+            "status": laudo.status.value
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/laudos", tags=["Laudos"])
+def listar_laudos(
+    paciente_id: Optional[int] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """Listar laudos com filtros"""
+    try:
+        from app.gestao_exames.models.laudo import StatusLaudo
+        from app.gestao_exames.models.laudo_resultado import LaudoResultado
+        from app.gestao_exames.models.resultado_exame import ResultadoExame
+        
+        status_enum = StatusLaudo(status) if status else None
+        
+        # Se for paciente, lista apenas seus próprios laudos
+        if current_user.tipo.value == "paciente":
+            from app.gestao_perfis.models.paciente import Paciente
+            paciente = db.query(Paciente).filter(Paciente.usuarioId == current_user.id).first()
+            if paciente:
+                paciente_id = paciente.usuarioId
+            laudos = LaudoService.listar_laudos_paciente(db, paciente_id, status_enum)
+        elif paciente_id:
+            # Médico listando laudos de um paciente específico
+            laudos = LaudoService.listar_laudos_paciente(db, paciente_id, status_enum)
+        else:
+            # Médico listando seus próprios laudos
+            laudos = LaudoService.listar_laudos_medico(db, current_user.id, status_enum)
+        
+        resultado_laudos = []
+        for laudo in laudos:
+            # Busca exames associados
+            laudo_resultados = db.query(LaudoResultado).filter(
+                LaudoResultado.laudoId == laudo.id
+            ).all()
+            
+            exames = []
+            paciente_info = None
+            for lr in laudo_resultados:
+                resultado = db.query(ResultadoExame).filter(
+                    ResultadoExame.id == lr.resultadoExameId
+                ).first()
+                if resultado and resultado.solicitacao:
+                    exames.append({
+                        "id": resultado.id,
+                        "solicitacao_id": resultado.solicitacaoId,
+                        "codigo_solicitacao": resultado.solicitacao.codigoSolicitacao,
+                        "nome_exame": resultado.solicitacao.nomeExame,
+                        "data_realizacao": resultado.dataRealizacao.isoformat(),
+                        "nome_laboratorio": resultado.nomeLaboratorio,
+                        "nome_arquivo": resultado.nomeArquivo,
+                        "url_arquivo": resultado.arquivoUrl
+                    })
+                    if not paciente_info and resultado.solicitacao.paciente:
+                        paciente_info = {
+                            "paciente_id": resultado.solicitacao.pacienteId,
+                            "paciente_nome": resultado.solicitacao.paciente.usuario.nome,
+                            "paciente_cpf": resultado.solicitacao.paciente.usuario.cpf
+                        }
+            
+            if paciente_info:
+                resultado_laudos.append({
+                    "id": laudo.id,
+                    "paciente_id": paciente_info["paciente_id"],
+                    "paciente_nome": paciente_info["paciente_nome"],
+                    "paciente_cpf": paciente_info["paciente_cpf"],
+                    "medico_id": laudo.medicoId,
+                    "medico_nome": laudo.medico.usuario.nome if laudo.medico else None,
+                    "medico_crm": laudo.medico.crm if laudo.medico else None,
+                    "titulo": laudo.titulo,
+                    "descricao": laudo.descricao,
+                    "status": laudo.status.value,
+                    "data_emissao": laudo.dataEmissao.isoformat(),
+                    "exames": exames
+                })
+        
+        return {"laudos": resultado_laudos}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/laudos/{laudo_id}", tags=["Laudos"])
+def obter_laudo(
+    laudo_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """Obter detalhes de um laudo"""
+    try:
+        from app.gestao_exames.models.laudo_resultado import LaudoResultado
+        from app.gestao_exames.models.resultado_exame import ResultadoExame
+        
+        laudo = LaudoService.buscar_laudo_por_id(db, laudo_id)
+        
+        if not laudo:
+            raise HTTPException(status_code=404, detail="Laudo não encontrado")
+        
+        # Busca exames associados
+        laudo_resultados = db.query(LaudoResultado).filter(
+            LaudoResultado.laudoId == laudo.id
+        ).all()
+        
+        exames = []
+        paciente_info = None
+        for lr in laudo_resultados:
+            resultado = db.query(ResultadoExame).filter(
+                ResultadoExame.id == lr.resultadoExameId
+            ).first()
+            if resultado and resultado.solicitacao:
+                exames.append({
+                    "id": resultado.id,
+                    "solicitacao_id": resultado.solicitacaoId,
+                    "codigo_solicitacao": resultado.solicitacao.codigoSolicitacao,
+                    "nome_exame": resultado.solicitacao.nomeExame,
+                    "data_realizacao": resultado.dataRealizacao.isoformat(),
+                    "nome_laboratorio": resultado.nomeLaboratorio,
+                    "nome_arquivo": resultado.nomeArquivo,
+                    "url_arquivo": resultado.arquivoUrl
+                })
+                if not paciente_info and resultado.solicitacao.paciente:
+                    paciente_info = {
+                        "paciente_id": resultado.solicitacao.pacienteId,
+                        "paciente_nome": resultado.solicitacao.paciente.usuario.nome,
+                        "paciente_cpf": resultado.solicitacao.paciente.usuario.cpf
+                    }
+        
+        if not paciente_info:
+            raise HTTPException(status_code=404, detail="Informações do paciente não encontradas")
+        
+        return {
+            "id": laudo.id,
+            "paciente_id": paciente_info["paciente_id"],
+            "paciente_nome": paciente_info["paciente_nome"],
+            "paciente_cpf": paciente_info["paciente_cpf"],
+            "medico_id": laudo.medicoId,
+            "medico_nome": laudo.medico.usuario.nome if laudo.medico else None,
+            "medico_crm": laudo.medico.crm if laudo.medico else None,
+            "titulo": laudo.titulo,
+            "descricao": laudo.descricao,
+            "status": laudo.status.value,
+            "data_emissao": laudo.dataEmissao.isoformat(),
+            "exames": exames
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -501,13 +771,13 @@ def criar_laudo(
 def atualizar_laudo(
     laudo_id: int,
     request: AtualizarLaudoRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)
 ):
     """História 2.1: Atualizar laudo em rascunho"""
     try:
         laudo = LaudoService.atualizar_laudo(
-            db, laudo_id, request.achados, 
-            request.impressao_diagnostica, request.recomendacoes
+            db, laudo_id, request.titulo, request.descricao
         )
         return {"message": "Laudo atualizado"}
     except Exception as e:
@@ -515,7 +785,11 @@ def atualizar_laudo(
 
 
 @app.post("/laudos/{laudo_id}/finalizar", tags=["Laudos"])
-def finalizar_laudo(laudo_id: int, db: Session = Depends(get_db)):
+def finalizar_laudo(
+    laudo_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)
+):
     """História 2.1: Finalizar laudo"""
     try:
         laudo = LaudoService.finalizar_laudo(db, laudo_id)
@@ -524,11 +798,97 @@ def finalizar_laudo(laudo_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/laudos/medico/{medico_id}", tags=["Laudos"])
-def listar_laudos_medico(medico_id: int, db: Session = Depends(get_db)):
-    """Listar laudos emitidos pelo médico"""
-    laudos = LaudoService.listar_laudos_medico(db, medico_id)
-    return {"laudos": [{"id": l.id, "status": l.status.value, "data_emissao": l.dataEmissao.isoformat()} for l in laudos]}
+# ==========================================
+# DASHBOARD
+# ==========================================
+
+@app.get("/dashboard/stats", tags=["Dashboard"])
+def obter_estatisticas_dashboard(
+    periodo: Optional[str] = "30d",
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)
+):
+    """Estatísticas do dashboard para médicos"""
+    try:
+        from datetime import datetime, timedelta
+        from sqlalchemy import func, extract
+        from app.gestao_exames.models.solicitacao_exame import SolicitacaoExame
+        from app.gestao_exames.models.resultado_exame import ResultadoExame
+        from app.gestao_exames.models.laudo import Laudo
+        
+        # Calcula data de início baseado no período
+        data_fim = datetime.utcnow()
+        if periodo == "7d":
+            data_inicio = data_fim - timedelta(days=7)
+        elif periodo == "90d":
+            data_inicio = data_fim - timedelta(days=90)
+        elif periodo == "1y":
+            data_inicio = data_fim - timedelta(days=365)
+        elif periodo == "all":
+            data_inicio = datetime(2000, 1, 1)
+        else:  # 30d (default)
+            data_inicio = data_fim - timedelta(days=30)
+        
+        # Total de solicitações do médico
+        total_solicitacoes = db.query(func.count(SolicitacaoExame.id)).filter(
+            SolicitacaoExame.medicoSolicitante == current_user.id,
+            SolicitacaoExame.dataSolicitacao >= data_inicio
+        ).scalar()
+        
+        # Exames recebidos (com resultado)
+        exames_recebidos = db.query(func.count(ResultadoExame.id)).join(
+            SolicitacaoExame, ResultadoExame.solicitacaoId == SolicitacaoExame.id
+        ).filter(
+            SolicitacaoExame.medicoSolicitante == current_user.id,
+            ResultadoExame.dataUpload >= data_inicio
+        ).scalar()
+        
+        # Laudos emitidos
+        laudos_emitidos = db.query(func.count(Laudo.id)).filter(
+            Laudo.medicoId == current_user.id,
+            Laudo.dataEmissao >= data_inicio
+        ).scalar()
+        
+        # Total de pacientes distintos
+        total_pacientes = db.query(func.count(func.distinct(SolicitacaoExame.pacienteId))).filter(
+            SolicitacaoExame.medicoSolicitante == current_user.id,
+            SolicitacaoExame.dataSolicitacao >= data_inicio
+        ).scalar()
+        
+        # Solicitações por mês
+        solicitacoes_por_mes = db.query(
+            func.to_char(SolicitacaoExame.dataSolicitacao, 'YYYY-MM').label('mes'),
+            func.count(SolicitacaoExame.id).label('total')
+        ).filter(
+            SolicitacaoExame.medicoSolicitante == current_user.id,
+            SolicitacaoExame.dataSolicitacao >= data_inicio
+        ).group_by('mes').order_by('mes').all()
+        
+        # Laudos por mês
+        laudos_por_mes = db.query(
+            func.to_char(Laudo.dataEmissao, 'YYYY-MM').label('mes'),
+            func.count(Laudo.id).label('total')
+        ).filter(
+            Laudo.medicoId == current_user.id,
+            Laudo.dataEmissao >= data_inicio
+        ).group_by('mes').order_by('mes').all()
+        
+        return {
+            "resumo": {
+                "total_solicitacoes": total_solicitacoes or 0,
+                "exames_recebidos": exames_recebidos or 0,
+                "laudos_emitidos": laudos_emitidos or 0,
+                "total_pacientes": total_pacientes or 0
+            },
+            "solicitacoes_por_mes": [
+                {"mes": row.mes, "total": row.total} for row in solicitacoes_por_mes
+            ],
+            "laudos_por_mes": [
+                {"mes": row.mes, "total": row.total} for row in laudos_por_mes
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ==========================================

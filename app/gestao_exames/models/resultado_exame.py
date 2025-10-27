@@ -13,6 +13,8 @@ class ResultadoExame(Base):
 
     id = Column(Integer, primary_key=True)
     solicitacaoId = Column(Integer, ForeignKey("solicitacoes_exame.id"), nullable=False)
+    dataRealizacao = Column(DateTime, nullable=False)
+    nomeLaboratorio = Column(String, nullable=False)
     arquivoUrl = Column(String, nullable=False)  # URL/path do arquivo PDF, imagem, etc
     nomeArquivo = Column(String)
     dataUpload = Column(DateTime, default=datetime.utcnow)
