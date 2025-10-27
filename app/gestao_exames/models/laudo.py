@@ -11,9 +11,8 @@ from app.core.database import Base
 
 class StatusLaudo(str, Enum):
     """Status do laudo"""
-    RASCUNHO = "rascunho"
-    FINALIZADO = "finalizado"
-    ENVIADO = "enviado"
+    RASCUNHO = "RASCUNHO"
+    FINALIZADO = "FINALIZADO"
 
 
 class Laudo(Base):
@@ -22,9 +21,8 @@ class Laudo(Base):
     id = Column(Integer, primary_key=True)
     resultadoExameId = Column(Integer, ForeignKey("resultados_exame.id"), nullable=False)
     medicoId = Column(Integer, ForeignKey("medicos.usuarioId"), nullable=False)
-    achados = Column(Text, nullable=False)
-    impressaoDiagnostica = Column(Text, nullable=False)
-    recomendacoes = Column(Text)
+    titulo = Column(String, nullable=False)
+    descricao = Column(Text, nullable=False)
     status = Column(SQLEnum(StatusLaudo), default=StatusLaudo.RASCUNHO)
     dataEmissao = Column(DateTime, default=datetime.utcnow)
     

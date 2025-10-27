@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.gestao_exames.models.laudo import Laudo, StatusLaudo
 from app.gestao_exames.models.resultado_exame import ResultadoExame
 from app.gestao_exames.models.solicitacao_exame import SolicitacaoExame, StatusSolicitacao
+from app.gestao_exames.models.laudo_resultado import LaudoResultado
 from app.gestao_consultas.models.log_prontuario import LogProntuario, TipoEvento
 
 
@@ -15,73 +16,43 @@ class LaudoService:
     """Service para gerenciar laudos médicos"""
     
     @staticmethod
-    def obter_fila_trabalho(db: Session, medico_id: int) -> List[ResultadoExame]:
-        """
-        História 1.1 (Épico 4): Fila de trabalho / Caixa de entrada
-        Retorna exames pendentes de análise para o médico
-        """
-        # Busca solicitações que o médico fez e que já têm resultado
-        solicitacoes = db.query(SolicitacaoExame).filter(
-            SolicitacaoExame.medicoSolicitante == medico_id,
-            SolicitacaoExame.status.in_([
-                StatusSolicitacao.RESULTADO_ENVIADO,
-                StatusSolicitacao.EM_ANALISE
-            ])
-        ).all()
-        
-        resultados_pendentes = []
-        for solicitacao in solicitacoes:
-            resultados = db.query(ResultadoExame).filter(
-                ResultadoExame.solicitacaoId == solicitacao.id
-            ).all()
-            
-            for resultado in resultados:
-                # Verifica se já tem laudo finalizado
-                laudo_existente = db.query(Laudo).filter(
-                    Laudo.resultadoExameId == resultado.id,
-                    Laudo.status.in_([StatusLaudo.FINALIZADO, StatusLaudo.ENVIADO])
-                ).first()
-                
-                if not laudo_existente:
-                    resultados_pendentes.append(resultado)
-        
-        return resultados_pendentes
-    
-    @staticmethod
     def criar_laudo(
         db: Session,
-        resultado_exame_id: int,
+        paciente_id: int,
         medico_id: int,
-        achados: str,
-        impressao_diagnostica: str,
-        recomendacoes: Optional[str] = None
+        titulo: str,
+        descricao: str,
+        exames_ids: List[int]
     ) -> Laudo:
         """
         História 2.1 (Épico 4): Emitir laudo médico
-        Médico redige laudo estruturado com achados e impressão diagnóstica
+        Médico cria laudo associando um ou mais exames
         """
-        # Verifica se resultado existe
-        resultado = db.query(ResultadoExame).filter(
-            ResultadoExame.id == resultado_exame_id
-        ).first()
-        
-        if not resultado:
-            raise ValueError("Resultado de exame não encontrado")
-        
         # Cria laudo
         novo_laudo = Laudo(
-            resultadoExameId=resultado_exame_id,
             medicoId=medico_id,
-            achados=achados,
-            impressaoDiagnostica=impressao_diagnostica,
-            recomendacoes=recomendacoes,
+            titulo=titulo,
+            descricao=descricao,
             status=StatusLaudo.RASCUNHO
         )
         
         db.add(novo_laudo)
+        db.flush()  # Para obter o ID
         
-        # Atualiza status da solicitação
-        resultado.solicitacao.status = StatusSolicitacao.EM_ANALISE
+        # Associa exames ao laudo
+        for exame_id in exames_ids:
+            resultado = db.query(ResultadoExame).filter(
+                ResultadoExame.id == exame_id
+            ).first()
+            
+            if not resultado:
+                raise ValueError(f"Resultado de exame {exame_id} não encontrado")
+            
+            laudo_resultado = LaudoResultado(
+                laudoId=novo_laudo.id,
+                resultadoExameId=exame_id
+            )
+            db.add(laudo_resultado)
         
         db.commit()
         db.refresh(novo_laudo)
@@ -92,9 +63,8 @@ class LaudoService:
     def atualizar_laudo(
         db: Session,
         laudo_id: int,
-        achados: Optional[str] = None,
-        impressao_diagnostica: Optional[str] = None,
-        recomendacoes: Optional[str] = None
+        titulo: Optional[str] = None,
+        descricao: Optional[str] = None
     ) -> Laudo:
         """Atualiza laudo em rascunho"""
         laudo = db.query(Laudo).filter(Laudo.id == laudo_id).first()
@@ -105,12 +75,10 @@ class LaudoService:
         if laudo.status != StatusLaudo.RASCUNHO:
             raise ValueError("Apenas laudos em rascunho podem ser editados")
         
-        if achados is not None:
-            laudo.achados = achados
-        if impressao_diagnostica is not None:
-            laudo.impressaoDiagnostica = impressao_diagnostica
-        if recomendacoes is not None:
-            laudo.recomendacoes = recomendacoes
+        if titulo is not None:
+            laudo.titulo = titulo
+        if descricao is not None:
+            laudo.descricao = descricao
         
         db.commit()
         db.refresh(laudo)
@@ -129,45 +97,28 @@ class LaudoService:
             raise ValueError("Laudo não encontrado")
         
         laudo.status = StatusLaudo.FINALIZADO
+        db.commit()
+        db.refresh(laudo)
         
-        # Atualiza status da solicitação
-        resultado = db.query(ResultadoExame).filter(
-            ResultadoExame.id == laudo.resultadoExameId
+        # Registra no prontuário - busca o paciente do primeiro exame
+        laudo_resultado = db.query(LaudoResultado).filter(
+            LaudoResultado.laudoId == laudo_id
         ).first()
         
-        if resultado:
-            resultado.solicitacao.status = StatusSolicitacao.LAUDADO
-        
-        db.commit()
-        db.refresh(laudo)
-        
-        # Registra no prontuário
-        if resultado:
-            log = LogProntuario(
-                pacienteId=resultado.solicitacao.pacienteId,
-                tipoEvento=TipoEvento.LAUDO,
-                descricao=f"Laudo médico finalizado: {resultado.solicitacao.tipoExame}",
-                referenciaId=laudo.id
-            )
-            db.add(log)
-            db.commit()
-        
-        return laudo
-    
-    @staticmethod
-    def enviar_laudo(db: Session, laudo_id: int) -> Laudo:
-        """Envia laudo ao paciente"""
-        laudo = db.query(Laudo).filter(Laudo.id == laudo_id).first()
-        
-        if not laudo:
-            raise ValueError("Laudo não encontrado")
-        
-        if laudo.status != StatusLaudo.FINALIZADO:
-            raise ValueError("Apenas laudos finalizados podem ser enviados")
-        
-        laudo.status = StatusLaudo.ENVIADO
-        db.commit()
-        db.refresh(laudo)
+        if laudo_resultado:
+            resultado = db.query(ResultadoExame).filter(
+                ResultadoExame.id == laudo_resultado.resultadoExameId
+            ).first()
+            
+            if resultado and resultado.solicitacao:
+                log = LogProntuario(
+                    pacienteId=resultado.solicitacao.pacienteId,
+                    tipoEvento=TipoEvento.LAUDO,
+                    descricao=f"Laudo médico finalizado: {laudo.titulo}",
+                    referenciaId=laudo.id
+                )
+                db.add(log)
+                db.commit()
         
         return laudo
     
@@ -177,15 +128,38 @@ class LaudoService:
         return db.query(Laudo).filter(Laudo.id == laudo_id).first()
     
     @staticmethod
-    def listar_laudos_medico(db: Session, medico_id: int) -> List[Laudo]:
+    def listar_laudos_medico(
+        db: Session, 
+        medico_id: int,
+        status: Optional[StatusLaudo] = None
+    ) -> List[Laudo]:
         """Lista todos os laudos emitidos por um médico"""
-        return db.query(Laudo).filter(
-            Laudo.medicoId == medico_id
-        ).order_by(Laudo.dataEmissao.desc()).all()
+        query = db.query(Laudo).filter(Laudo.medicoId == medico_id)
+        
+        if status:
+            query = query.filter(Laudo.status == status)
+        
+        return query.order_by(Laudo.dataEmissao.desc()).all()
     
     @staticmethod
-    def buscar_laudos_por_resultado(db: Session, resultado_exame_id: int) -> List[Laudo]:
-        """Busca laudos de um resultado de exame"""
-        return db.query(Laudo).filter(
-            Laudo.resultadoExameId == resultado_exame_id
-        ).all()
+    def listar_laudos_paciente(
+        db: Session, 
+        paciente_id: int,
+        status: Optional[StatusLaudo] = None
+    ) -> List[Laudo]:
+        """Lista laudos de um paciente"""
+        # Join com laudo_resultado -> resultado_exame -> solicitacao
+        query = db.query(Laudo).join(
+            LaudoResultado, Laudo.id == LaudoResultado.laudoId
+        ).join(
+            ResultadoExame, LaudoResultado.resultadoExameId == ResultadoExame.id
+        ).join(
+            SolicitacaoExame, ResultadoExame.solicitacaoId == SolicitacaoExame.id
+        ).filter(
+            SolicitacaoExame.pacienteId == paciente_id
+        )
+        
+        if status:
+            query = query.filter(Laudo.status == status)
+        
+        return query.order_by(Laudo.dataEmissao.desc()).all()

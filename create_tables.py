@@ -30,25 +30,25 @@ from app.gestao_perfis.models import (
 from app.gestao_consultas.models import Consulta, LogProntuario
 
 # Importar modelos de gestão de exames
-from app.gestao_exames.models import SolicitacaoExame, ResultadoExame, Laudo
+from app.gestao_exames.models import SolicitacaoExame, ResultadoExame, Laudo, LaudoResultado
 
 
 def main():
-    print("Criando tabelas no banco de dados...")
-    print(f"Database URL: {engine.url}")
+    print("🔨 Criando tabelas no banco de dados...")
+    print(f"📊 Database URL: {engine.url}")
     
     try:
         # Cria todas as tabelas
         Base.metadata.create_all(bind=engine)
-        print("\nTabelas criadas com sucesso!")
+        print("\n✅ Tabelas criadas com sucesso!")
         
         # Lista as tabelas criadas
-        print("\nTabelas criadas:")
+        print("\n📋 Tabelas criadas:")
         for table in Base.metadata.sorted_tables:
             print(f"   - {table.name}")
             
     except Exception as e:
-        print(f"\nErro ao criar tabelas: {e}")
+        print(f"\n❌ Erro ao criar tabelas: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)

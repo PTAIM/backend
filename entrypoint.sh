@@ -1,8 +1,8 @@
-gunicorn setup.wsgi:application --bind 0.0.0.0:8000
-
+#!/bin/bash
 set -e
 
-python manage.py migrate
-python manage.py dump_tutoriais
-python manage.py collectstatic --noinput
-gunicorn setup.wsgi:application --bind 0.0.0.0:8000
+# Cria as tabelas no banco
+python create_tables.py
+
+# Inicia o servidor FastAPI
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
