@@ -181,3 +181,25 @@ class ExameService:
         return db.query(ResultadoExame).filter(
             ResultadoExame.solicitacaoId == solicitacao_id
         ).all()
+    
+    @staticmethod
+    def listar_resultados_medico(db: Session, medico_id: int) -> List[ResultadoExame]:
+        """Lista resultados de exames das solicitações feitas pelo médico"""
+        return db.query(ResultadoExame).join(SolicitacaoExame).filter(
+            SolicitacaoExame.medicoSolicitante == medico_id
+        ).order_by(ResultadoExame.dataUpload.desc()).all()
+    
+    @staticmethod
+    def listar_resultados_paciente(db: Session, paciente_id: int) -> List[ResultadoExame]:
+        """Lista resultados de exames do paciente"""
+        return db.query(ResultadoExame).join(SolicitacaoExame).filter(
+            SolicitacaoExame.pacienteId == paciente_id
+        ).order_by(ResultadoExame.dataUpload.desc()).all()
+    
+    @staticmethod
+    def listar_resultados_funcionario(db: Session, funcionario_id: int) -> List[ResultadoExame]:
+        """Lista resultados de exames criados pelo funcionário (baseado em quem fez upload)"""
+        # Como não temos campo específico para funcionário que fez upload,
+        # vamos usar uma abordagem baseada no usuário logado
+        # Por ora, retornamos todos os resultados (funcionário vê tudo)
+        return db.query(ResultadoExame).order_by(ResultadoExame.dataUpload.desc()).all()

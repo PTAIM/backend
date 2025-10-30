@@ -16,7 +16,7 @@ from datetime import datetime, time
 from app.core.database import get_db
 from app.core.auth_dependencies import (
     get_current_user, get_current_active_user, require_medico, 
-    require_paciente, require_admin
+    require_paciente, require_admin, require_funcionario
 )
 
 # Imports dos schemas
@@ -258,6 +258,31 @@ def buscar_sumario_paciente(paciente_id: int, db: Session = Depends(get_db)):
     }
 
 
+@app.get("/pacientes", tags=["Pacientes"])
+def listar_pacientes(
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)  # Apenas médicos têm acesso
+):
+    """Listar pacientes relacionados com o médico através de solicitações de exame"""
+    try:
+        pacientes = PacienteService.listar_pacientes_medico(db, current_user.id)
+        return {
+            "pacientes": [
+                {
+                    "id": p.usuarioId,
+                    "nome": p.usuario.nome if p.usuario else None,
+                    "email": p.usuario.email if p.usuario else None,
+                    "cpf": p.usuario.cpf if p.usuario else None,
+                    "telefone": p.usuario.telefone if p.usuario else None,
+                    "data_nascimento": p.dataNascimento,
+                    "endereco": p.endereco
+                } for p in pacientes
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ==========================================
 # ÉPICO 2: CICLO DE VIDA DE CONSULTAS
 # ==========================================
@@ -266,7 +291,8 @@ def buscar_sumario_paciente(paciente_id: int, db: Session = Depends(get_db)):
 @app.post("/agendas", tags=["Agendas"])
 def definir_horario_atendimento(
     request: DefinirHorarioAtendimentoRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)  # Apenas médicos definem horários
 ):
     """História 1.1: Definir horários de atendimento"""
     try:
@@ -318,7 +344,8 @@ def obter_horarios_disponiveis(
 @app.post("/consultas", tags=["Consultas"])
 def agendar_consulta(
     request: AgendarConsultaRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)  # Usuário deve estar logado
 ):
     """História 1.2: Agendar consulta"""
     try:
@@ -348,7 +375,11 @@ def listar_consultas_medico(medico_id: int, apenas_futuras: bool = False, db: Se
 
 # Feature 2: Realização da Teleconsulta
 @app.post("/consultas/{consulta_id}/iniciar", tags=["Consultas"])
-def iniciar_consulta(consulta_id: int, db: Session = Depends(get_db)):
+def iniciar_consulta(
+    consulta_id: int, 
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)  # Usuário deve estar logado
+):
     """História 2.1: Iniciar teleconsulta"""
     try:
         consulta = ConsultaService.iniciar_consulta(db, consulta_id)
@@ -361,7 +392,8 @@ def iniciar_consulta(consulta_id: int, db: Session = Depends(get_db)):
 def finalizar_consulta(
     consulta_id: int, 
     request: Optional[FinalizarConsultaRequest] = None, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)  # Usuário deve estar logado
 ):
     """Finalizar consulta"""
     try:
@@ -402,19 +434,33 @@ def criar_solicitacao_exame(
 def listar_solicitacoes(
     status: Optional[str] = None,
     paciente_id: Optional[int] = None,
+    data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
+    data_fim: Optional[str] = None,
+    nome_exame: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(require_medico)
 ):
-    """Listar solicitações com filtros"""
+    """Listar solicitações com filtros avançados"""
     try:
         from app.gestao_exames.models.solicitacao_exame import StatusSolicitacao
+        from datetime import datetime
         
         status_enum = StatusSolicitacao(status) if status else None
+        dt_inicio = datetime.fromisoformat(data_inicio) if data_inicio else None
+        dt_fim = datetime.fromisoformat(data_fim) if data_fim else None
         
         if paciente_id:
             solicitacoes = ExameService.listar_solicitacoes_paciente(db, paciente_id, status_enum)
         else:
             solicitacoes = ExameService.listar_solicitacoes_medico(db, current_user.id, status_enum)
+        
+        # Aplicar filtros adicionais
+        if dt_inicio:
+            solicitacoes = [s for s in solicitacoes if s.dataSolicitacao >= dt_inicio]
+        if dt_fim:
+            solicitacoes = [s for s in solicitacoes if s.dataSolicitacao <= dt_fim]
+        if nome_exame:
+            solicitacoes = [s for s in solicitacoes if nome_exame.lower() in s.nomeExame.lower()]
         
         return {
             "solicitacoes": [
@@ -493,7 +539,8 @@ def atualizar_status_solicitacao(
 @app.post("/resultados", tags=["Exames"])
 def enviar_resultado_exame(
     request: EnviarResultadoExameRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_funcionario)  # Apenas funcionários podem enviar resultados
 ):
     """História 1.2: Funcionário envia resultado de exame"""
     try:
@@ -513,35 +560,76 @@ def enviar_resultado_exame(
 @app.get("/exames", tags=["Exames"])
 def listar_exames(
     paciente_id: Optional[int] = None,
+    data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
+    data_fim: Optional[str] = None,
+    nome_exame: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user)
 ):
-    """Listar exames (resultados) com filtros"""
+    """Listar exames (resultados) com lógica baseada no tipo de usuário"""
     try:
-        # Se paciente_id não for fornecido e usuário for paciente, usa o próprio ID
-        if not paciente_id and current_user.tipo.value == "paciente":
+        from datetime import datetime
+        
+        # Lógica baseada no tipo de usuário
+        if current_user.tipo.value == "medico":
+            # Médico vê exames das suas solicitações
+            if paciente_id:
+                # Se especificou paciente, filtra por paciente nas suas solicitações
+                solicitacoes = ExameService.listar_solicitacoes_medico(db, current_user.id)
+                solicitacoes = [s for s in solicitacoes if s.pacienteId == paciente_id]
+                resultados = []
+                for sol in solicitacoes:
+                    resultados.extend(sol.resultados)
+            else:
+                # Lista todos os resultados das suas solicitações
+                resultados = ExameService.listar_resultados_medico(db, current_user.id)
+                
+        elif current_user.tipo.value == "paciente":
+            # Paciente vê apenas seus próprios exames
             from app.gestao_perfis.models.paciente import Paciente
             paciente = db.query(Paciente).filter(Paciente.usuarioId == current_user.id).first()
-            if paciente:
-                paciente_id = paciente.usuarioId
+            if not paciente:
+                raise HTTPException(status_code=404, detail="Perfil de paciente não encontrado")
+            resultados = ExameService.listar_resultados_paciente(db, paciente.usuarioId)
+            
+        else:  # funcionário/admin
+            # Funcionário vê exames que ele criou (por ora, todos os exames)
+            if paciente_id:
+                resultados = ExameService.listar_resultados_paciente(db, paciente_id)
+            else:
+                resultados = ExameService.listar_resultados_funcionario(db, current_user.id)
         
-        if not paciente_id:
-            raise HTTPException(status_code=400, detail="paciente_id é obrigatório")
+        # Aplicar filtros adicionais
+        dt_inicio = datetime.fromisoformat(data_inicio) if data_inicio else None
+        dt_fim = datetime.fromisoformat(data_fim) if data_fim else None
         
-        solicitacoes = ExameService.listar_solicitacoes_paciente(db, paciente_id)
+        if dt_inicio:
+            resultados = [r for r in resultados if r.dataRealizacao >= dt_inicio]
+        if dt_fim:
+            resultados = [r for r in resultados if r.dataRealizacao <= dt_fim]
+        if nome_exame:
+            resultados = [r for r in resultados if nome_exame.lower() in r.solicitacao.nomeExame.lower()]
         
         exames = []
-        for sol in solicitacoes:
-            for resultado in sol.resultados:
+        for resultado in resultados:
+            if resultado.solicitacao:  # Garante que há solicitação associada
                 exames.append({
                     "id": resultado.id,
-                    "solicitacao_id": sol.id,
-                    "codigo_solicitacao": sol.codigoSolicitacao,
-                    "nome_exame": sol.nomeExame,
+                    "solicitacao_id": resultado.solicitacao.id,
+                    "codigo_solicitacao": resultado.solicitacao.codigoSolicitacao,
+                    "paciente_id": resultado.solicitacao.pacienteId,
+                    "paciente_nome": resultado.solicitacao.paciente.usuario.nome if resultado.solicitacao.paciente else None,
+                    "paciente_cpf": resultado.solicitacao.paciente.usuario.cpf if resultado.solicitacao.paciente else None,
+                    "medico_id": resultado.solicitacao.medicoSolicitante,
+                    "medico_nome": resultado.solicitacao.medico.usuario.nome if resultado.solicitacao.medico else None,
+                    "medico_crm": resultado.solicitacao.medico.crm if resultado.solicitacao.medico else None,
+                    "nome_exame": resultado.solicitacao.nomeExame,
                     "data_realizacao": resultado.dataRealizacao.isoformat(),
+                    "data_upload": resultado.dataUpload.isoformat(),
                     "nome_laboratorio": resultado.nomeLaboratorio,
                     "nome_arquivo": resultado.nomeArquivo,
-                    "url_arquivo": resultado.arquivoUrl
+                    "url_arquivo": resultado.arquivoUrl,
+                    "observacoes": resultado.observacoes
                 })
         
         return {"exames": exames}
@@ -622,16 +710,22 @@ def criar_laudo(
 def listar_laudos(
     paciente_id: Optional[int] = None,
     status: Optional[str] = None,
+    data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
+    data_fim: Optional[str] = None,
+    titulo: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user)
 ):
-    """Listar laudos com filtros"""
+    """Listar laudos com filtros avançados"""
     try:
         from app.gestao_exames.models.laudo import StatusLaudo
         from app.gestao_exames.models.laudo_resultado import LaudoResultado
         from app.gestao_exames.models.resultado_exame import ResultadoExame
+        from datetime import datetime
         
         status_enum = StatusLaudo(status) if status else None
+        dt_inicio = datetime.fromisoformat(data_inicio) if data_inicio else None
+        dt_fim = datetime.fromisoformat(data_fim) if data_fim else None
         
         # Se for paciente, lista apenas seus próprios laudos
         if current_user.tipo.value == "paciente":
@@ -646,6 +740,14 @@ def listar_laudos(
         else:
             # Médico listando seus próprios laudos
             laudos = LaudoService.listar_laudos_medico(db, current_user.id, status_enum)
+        
+        # Aplicar filtros adicionais
+        if dt_inicio:
+            laudos = [l for l in laudos if l.dataEmissao >= dt_inicio]
+        if dt_fim:
+            laudos = [l for l in laudos if l.dataEmissao <= dt_fim]
+        if titulo:
+            laudos = [l for l in laudos if titulo.lower() in l.titulo.lower()]
         
         resultado_laudos = []
         for laudo in laudos:

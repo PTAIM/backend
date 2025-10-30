@@ -2,7 +2,7 @@
 Service para Sumário de Saúde do Paciente
 Feature 3 - Épico 1: Gestão de Perfis
 """
-from typing import Optional
+from typing import Optional, List
 from sqlalchemy.orm import Session
 
 from app.gestao_perfis.models.paciente import Paciente
@@ -68,6 +68,26 @@ class PacienteService:
     def buscar_paciente_por_id(db: Session, paciente_id: int) -> Optional[Paciente]:
         """Busca paciente por ID"""
         return db.query(Paciente).filter(Paciente.usuarioId == paciente_id).first()
+    
+    @staticmethod
+    def listar_pacientes_medico(db: Session, medico_id: int) -> List[Paciente]:
+        """Lista pacientes que têm relação com o médico através de solicitações de exame"""
+        from app.gestao_exames.models.solicitacao_exame import SolicitacaoExame
+        from sqlalchemy import distinct
+        
+        # Busca pacientes distintos que têm solicitações feitas pelo médico
+        pacientes_ids = db.query(distinct(SolicitacaoExame.pacienteId)).filter(
+            SolicitacaoExame.medicoSolicitante == medico_id
+        ).all()
+        
+        # Extrai os IDs da tupla
+        ids = [pid[0] for pid in pacientes_ids]
+        
+        if not ids:
+            return []
+        
+        # Busca os pacientes completos
+        return db.query(Paciente).filter(Paciente.usuarioId.in_(ids)).all()
 
 
 class SumarioSaudeService:

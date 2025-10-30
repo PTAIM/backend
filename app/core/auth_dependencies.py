@@ -91,3 +91,13 @@ def require_admin(current_user: Usuario = Depends(get_current_user)) -> Usuario:
             detail="Acesso restrito a administradores"
         )
     return current_user
+
+
+def require_funcionario(current_user: Usuario = Depends(get_current_user)) -> Usuario:
+    """Dependency que exige que o usuário seja um funcionário (admin)"""
+    if current_user.tipo.value != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso restrito a funcionários"
+        )
+    return current_user
