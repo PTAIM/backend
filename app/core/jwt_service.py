@@ -5,11 +5,12 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+import os
 
 # Configurações JWT
-SECRET_KEY = "sua-chave-secreta-muito-segura-aqui-2024"  # Em produção, use variável de ambiente
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "sua-chave-secreta-muito-segura-aqui-2024")  # Em produção, use variável de ambiente
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))  # 24 horas por padrão
 
 
 class JWTService:
