@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 import bcrypt
 from datetime import timedelta
+import secrets
+import string
 
 from app.gestao_perfis.models.usuario import Usuario, TipoUsuario
 from app.core.jwt_service import JWTService
@@ -33,6 +35,14 @@ class AuthService:
         password_bytes = plain_password.encode('utf-8')[:72]
         hashed_bytes = hashed_password.encode('utf-8')
         return bcrypt.checkpw(password_bytes, hashed_bytes)
+    
+    @staticmethod
+    def gerar_senha_aleatoria(tamanho: int = 8) -> str:
+        """Gera uma senha aleatória segura"""
+        # Inclui letras maiúsculas, minúsculas e números
+        caracteres = string.ascii_letters + string.digits
+        senha = ''.join(secrets.choice(caracteres) for _ in range(tamanho))
+        return senha
     
     @staticmethod
     def cadastrar_usuario(
