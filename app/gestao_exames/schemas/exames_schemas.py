@@ -42,7 +42,7 @@ class CriarSolicitacaoExameRequest(BaseModel):
 
 
 class EnviarResultadoExameRequest(BaseModel):
-    codigo_solicitacao: str = Field(..., description="Código UUID da solicitação")
+    codigo_solicitacao: str = Field(..., description="Código único da solicitação (10 caracteres)")
     data_realizacao: datetime = Field(..., description="Data de realização do exame")
     nome_laboratorio: str = Field(..., description="Nome do laboratório")
     observacoes: Optional[str] = Field(None, description="Observações do exame")
@@ -51,7 +51,7 @@ class EnviarResultadoExameRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "codigo_solicitacao": "550e8400-e29b-41d4-a716-446655440000",
+                "codigo_solicitacao": "K2XpJ9fG4A",
                 "data_realizacao": "2025-10-26T10:00:00",
                 "nome_laboratorio": "Laboratório São Lucas",
                 "observacoes": "Exame realizado em jejum de 12h"
