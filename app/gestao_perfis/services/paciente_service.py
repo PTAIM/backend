@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.gestao_perfis.models.paciente import Paciente
 from app.gestao_perfis.models.sumario_saude import SumarioSaude
+from app.gestao_perfis.models.usuario import TipoUsuario
+from app.gestao_perfis.services.auth_service import AuthService
 
 
 class PacienteService:
@@ -68,6 +70,58 @@ class PacienteService:
     def buscar_paciente_por_id(db: Session, paciente_id: int) -> Optional[Paciente]:
         """Busca paciente por ID"""
         return db.query(Paciente).filter(Paciente.usuarioId == paciente_id).first()
+    
+    @staticmethod
+    def criar_paciente_completo(
+        db: Session,
+        nome: str,
+        email: str,
+        telefone: str,
+        cpf: str,
+        data_nascimento: str,
+        sumario_saude: Optional[dict] = None
+    ) -> tuple[Paciente, str]:
+        """
+        Cria paciente completo: usuário + perfil + sumário de saúde
+        Retorna o paciente criado e a senha gerada
+        """
+        try:
+            # Gera senha aleatória
+            senha_gerada = AuthService.gerar_senha_aleatoria(8)
+            
+            # Cria usuário
+            usuario = AuthService.cadastrar_usuario(
+                db=db,
+                nome=nome,
+                email=email,
+                senha=senha_gerada,
+                cpf=cpf,
+                tipo=TipoUsuario.PACIENTE,
+                telefone=telefone
+            )
+            
+            # Cria perfil do paciente
+            paciente = PacienteService.criar_perfil_paciente(
+                db=db,
+                usuario_id=usuario.id,
+                data_nascimento=data_nascimento
+            )
+            
+            # Cria sumário de saúde se fornecido
+            if sumario_saude:
+                SumarioSaudeService.criar_sumario_saude(
+                    db=db,
+                    paciente_id=usuario.id,
+                    historico_doencas=sumario_saude.get("historico_doencas"),
+                    alergias=sumario_saude.get("alergias"),
+                    medicacoes=sumario_saude.get("medicacoes")
+                )
+            
+            return paciente, senha_gerada
+            
+        except Exception as e:
+            db.rollback()
+            raise e
     
     @staticmethod
     def listar_pacientes_medico(db: Session, medico_id: int) -> List[Paciente]:
