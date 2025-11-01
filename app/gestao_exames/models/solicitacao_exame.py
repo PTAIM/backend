@@ -5,7 +5,7 @@ from enum import Enum
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum as SQLEnum, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
-import uuid
+from nanoid import generate
 
 from app.core.database import Base
 
@@ -17,11 +17,16 @@ class StatusSolicitacao(str, Enum):
     CANCELADO = "CANCELADO"
 
 
+def gerar_codigo_solicitacao():
+    """Gera um código único de 10 caracteres para a solicitação"""
+    return generate(size=10)
+
+
 class SolicitacaoExame(Base):
     __tablename__ = "solicitacoes_exame"
 
     id = Column(Integer, primary_key=True)
-    codigoSolicitacao = Column(String, unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    codigoSolicitacao = Column(String, unique=True, nullable=False, default=gerar_codigo_solicitacao)
     consultaId = Column(Integer, ForeignKey("consultas.id"), nullable=True)  # Pode ser opcional
     pacienteId = Column(Integer, ForeignKey("pacientes.usuarioId"), nullable=False)
     medicoSolicitante = Column(Integer, ForeignKey("medicos.usuarioId"), nullable=False)
