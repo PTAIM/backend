@@ -23,7 +23,7 @@ from app.core.auth_dependencies import (
 from app.gestao_perfis.schemas.perfis_schemas import (
     CadastroUsuarioRequest, LoginRequest, LoginResponse, UsuarioResponse,
     CriarPerfilMedicoRequest, AtualizarPerfilMedicoRequest, CriarEspecialidadeRequest,
-    CriarPerfilPacienteRequest, CriarSumarioSaudeRequest,
+    CriarPerfilPacienteRequest, CriarPacienteCompletoRequest, CriarSumarioSaudeRequest,
     AtualizarSumarioSaudeRequest, AdicionarEspecialidadeRequest
 )
 from app.gestao_consultas.schemas.consultas_schemas import (
@@ -192,6 +192,36 @@ def listar_especialidades(db: Session = Depends(get_db)):
 
 
 # Feature 3: Sumário de Saúde do Paciente
+@app.post("/pacientes/", tags=["Pacientes"])
+def criar_paciente_completo(
+    request: CriarPacienteCompletoRequest,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico)  # Apenas médicos podem criar pacientes
+):
+    """
+    Criar novo paciente completo (usuário + perfil + sumário)
+    Gera senha aleatória automaticamente
+    """
+    try:
+        paciente, senha_gerada = PacienteService.criar_paciente_completo(
+            db=db,
+            nome=request.nome,
+            email=request.email,
+            telefone=request.telefone,
+            cpf=request.cpf,
+            data_nascimento=request.data_nascimento,
+            sumario_saude=request.sumario_saude
+        )
+        
+        return {
+            "message": "Paciente cadastrado com sucesso.",
+            "paciente_id": paciente.usuarioId,
+            "senha_temporaria": senha_gerada
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/pacientes/perfil", tags=["Pacientes"])
 def criar_perfil_paciente(
     request: CriarPerfilPacienteRequest,
@@ -544,9 +574,10 @@ def enviar_resultado_exame(
 ):
     """História 1.2: Funcionário envia resultado de exame"""
     try:
-        # TODO: Handle file upload here - for now assuming arquivo_url is provided
-        arquivo_url = "/uploads/temp.pdf"  # Placeholder
-        nome_arquivo = "resultado.pdf"  # Placeholder
+        # Por ora, usando URLs de placeholder para arquivos
+        # Em implementação futura, integrar com serviço de upload de arquivos
+        arquivo_url = "/uploads/temp.pdf"
+        nome_arquivo = "resultado.pdf"
         
         resultado = ExameService.enviar_resultado_exame(
             db, request.codigo_solicitacao, request.data_realizacao,
