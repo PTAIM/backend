@@ -126,6 +126,32 @@ class CriarPerfilPacienteRequest(BaseModel):
         }
 
 
+class CriarPacienteCompletoRequest(BaseModel):
+    """Schema para criar paciente completo (usuário + perfil + sumário)"""
+    nome: str = Field(..., description="Nome completo do paciente", min_length=3)
+    email: EmailStr = Field(..., description="Email válido")
+    telefone: str = Field(..., description="Telefone")
+    cpf: str = Field(..., description="CPF (apenas números)", min_length=11, max_length=11)
+    data_nascimento: str = Field(..., description="Data de nascimento (YYYY-MM-DD)")
+    sumario_saude: Optional[dict] = Field(None, description="Sumário de saúde inicial")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "nome": "Maria Santos",
+                "email": "maria@email.com",
+                "telefone": "11999999999",
+                "cpf": "12345678900", 
+                "data_nascimento": "1985-03-20",
+                "sumario_saude": {
+                    "alergias": "Nenhuma conhecida",
+                    "medicacoes": "Nenhuma",
+                    "historico_doencas": "Nenhum"
+                }
+            }
+        }
+
+
 class CriarSumarioSaudeRequest(BaseModel):
     historico_doencas: Optional[str] = Field(None, description="Histórico de doenças preexistentes")
     alergias: Optional[str] = Field(None, description="Lista de alergias")
