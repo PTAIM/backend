@@ -2,7 +2,7 @@
 Schemas Pydantic para Gestão de Perfis
 """
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional
+from typing import Optional, List, Any, Generic, TypeVar
 from enum import Enum
 
 
@@ -207,3 +207,37 @@ class MedicoResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ========== Schemas de Paginação ==========
+
+T = TypeVar('T')
+
+class PaginationParams(BaseModel):
+    """Parâmetros de paginação"""
+    page: int = Field(1, ge=1, description="Número da página (começa em 1)")
+    size: int = Field(10, ge=1, le=100, description="Tamanho da página (máximo 100)")
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    """Resposta paginada genérica"""
+    items: List[T]
+    total: int
+    page: int
+    size: int
+    pages: int
+    has_next: bool
+    has_prev: bool
+
+    @classmethod
+    def create(cls, items: List[T], total: int, page: int, size: int):
+        """Cria uma resposta paginada"""
+        pages = (total + size - 1) // size  # Ceiling division
+        return cls(
+            items=items,
+            total=total,
+            page=page,
+            size=size,
+            pages=pages,
+            has_next=page < pages,
+            has_prev=page > 1
+        )

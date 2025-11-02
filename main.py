@@ -7,24 +7,31 @@ from dotenv import load_dotenv
 # Carrega variáveis de ambiente do arquivo .env
 load_dotenv()
 
+# ========== Imports Padrão ==========
+import uvicorn
+from datetime import datetime, time, timedelta
+from typing import Optional
+
+# ========== Imports FastAPI/SQLAlchemy ==========
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
-from typing import Optional
-from datetime import datetime, time
+from sqlalchemy import func, extract
 
+# ========== Imports Core ==========
 from app.core.database import get_db
 from app.core.auth_dependencies import (
     get_current_user, get_current_active_user, require_medico, 
     require_paciente, require_admin, require_funcionario
 )
 
-# Imports dos schemas
+# ========== Imports Schemas ==========
 from app.gestao_perfis.schemas.perfis_schemas import (
     CadastroUsuarioRequest, LoginRequest, LoginResponse, UsuarioResponse,
     CriarPerfilMedicoRequest, AtualizarPerfilMedicoRequest, CriarEspecialidadeRequest,
     CriarPerfilPacienteRequest, CriarPacienteCompletoRequest, CriarSumarioSaudeRequest,
-    AtualizarSumarioSaudeRequest, AdicionarEspecialidadeRequest
+    AtualizarSumarioSaudeRequest, AdicionarEspecialidadeRequest,
+    PaginationParams, PaginatedResponse
 )
 from app.gestao_consultas.schemas.consultas_schemas import (
     DefinirHorarioAtendimentoRequest, AgendarConsultaRequest,
@@ -35,10 +42,8 @@ from app.gestao_exames.schemas.exames_schemas import (
     CriarLaudoRequest, AtualizarLaudoRequest, AtualizarStatusSolicitacaoRequest
 )
 
-# Imports dos services
-# Importar services
+# ========== Imports Services ==========
 from app.gestao_perfis.services.auth_service import AuthService
-from app.gestao_perfis.models.usuario import Usuario
 from app.gestao_perfis.services.medico_service import MedicoService, EspecialidadeService
 from app.gestao_perfis.services.paciente_service import PacienteService, SumarioSaudeService
 from app.gestao_consultas.services.agenda_service import AgendaService
@@ -47,10 +52,16 @@ from app.gestao_consultas.services.prontuario_service import ProntuarioService
 from app.gestao_exames.services.exame_service import ExameService
 from app.gestao_exames.services.laudo_service import LaudoService
 
-# Imports dos modelos/enums
-from app.gestao_perfis.models.usuario import TipoUsuario
+# ========== Imports Models ==========
+from app.gestao_perfis.models.usuario import Usuario, TipoUsuario, Usuario as UsuarioModel
+from app.gestao_perfis.models.paciente import Paciente
+from app.gestao_perfis.models.especialidade import Especialidade
 from app.gestao_perfis.models.agenda import DiaSemana
 from app.gestao_consultas.models.log_prontuario import TipoEvento
+from app.gestao_exames.models.solicitacao_exame import SolicitacaoExame, StatusSolicitacao
+from app.gestao_exames.models.resultado_exame import ResultadoExame
+from app.gestao_exames.models.laudo import Laudo, StatusLaudo
+from app.gestao_exames.models.laudo_resultado import LaudoResultado
 
 app = FastAPI(
     title="Sistema de Telemedicina", 
@@ -60,6 +71,18 @@ app = FastAPI(
 
 # Configurar segurança JWT no Swagger
 security = HTTPBearer()
+
+
+# ==========================================
+# FUNÇÕES AUXILIARES
+# ==========================================
+
+def apply_pagination(query, page: int, size: int):
+    """Aplica paginação a uma query SQLAlchemy"""
+    offset = (page - 1) * size
+    total = query.count()
+    items = query.offset(offset).limit(size).all()
+    return items, total
 
 
 # ==========================================
@@ -184,11 +207,25 @@ def criar_especialidade(request: CriarEspecialidadeRequest, db: Session = Depend
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/especialidades", tags=["Especialidades"])
-def listar_especialidades(db: Session = Depends(get_db)):
-    """Listar todas especialidades"""
-    especialidades = EspecialidadeService.listar_especialidades(db)
-    return {"especialidades": [{"id": e.id, "nome": e.nome} for e in especialidades]}
+@app.get("/especialidades", tags=["Especialidades"], response_model=PaginatedResponse[dict])
+def listar_especialidades(
+    page: int = 1,
+    size: int = 10,
+    db: Session = Depends(get_db)
+):
+    """Listar todas especialidades com paginação"""
+    
+    query = db.query(Especialidade)
+    items, total = apply_pagination(query, page, size)
+    
+    especialidades_data = [{"id": e.id, "nome": e.nome} for e in items]
+    
+    return PaginatedResponse.create(
+        items=especialidades_data,
+        total=total,
+        page=page,
+        size=size
+    )
 
 
 # Feature 3: Sumário de Saúde do Paciente
@@ -288,27 +325,45 @@ def buscar_sumario_paciente(paciente_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/pacientes", tags=["Pacientes"])
+@app.get("/pacientes", tags=["Pacientes"], response_model=PaginatedResponse[dict])
 def listar_pacientes(
+    page: int = 1,
+    size: int = 10,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(require_medico)  # Apenas médicos têm acesso
 ):
     """Listar pacientes relacionados com o médico através de solicitações de exame"""
     try:
-        pacientes = PacienteService.listar_pacientes_medico(db, current_user.id)
-        return {
-            "pacientes": [
-                {
-                    "id": p.usuarioId,
-                    "nome": p.usuario.nome if p.usuario else None,
-                    "email": p.usuario.email if p.usuario else None,
-                    "cpf": p.usuario.cpf if p.usuario else None,
-                    "telefone": p.usuario.telefone if p.usuario else None,
-                    "data_nascimento": p.dataNascimento,
-                    "endereco": p.endereco
-                } for p in pacientes
-            ]
-        }
+        
+        # Query para pacientes do médico através de solicitações
+        query = db.query(Paciente).join(
+            UsuarioModel, Paciente.usuarioId == UsuarioModel.id
+        ).join(
+            SolicitacaoExame, SolicitacaoExame.pacienteId == Paciente.usuarioId
+        ).filter(
+            SolicitacaoExame.medicoSolicitante == current_user.id
+        ).distinct()
+        
+        items, total = apply_pagination(query, page, size)
+        
+        pacientes_data = [
+            {
+                "id": p.usuarioId,
+                "nome": p.usuario.nome if p.usuario else None,
+                "email": p.usuario.email if p.usuario else None,
+                "cpf": p.usuario.cpf if p.usuario else None,
+                "telefone": p.usuario.telefone if p.usuario else None,
+                "data_nascimento": p.dataNascimento,
+                "endereco": p.endereco
+            } for p in items
+        ]
+        
+        return PaginatedResponse.create(
+            items=pacientes_data,
+            total=total,
+            page=page,
+            size=size
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -326,8 +381,6 @@ def definir_horario_atendimento(
 ):
     """História 1.1: Definir horários de atendimento"""
     try:
-        from app.gestao_perfis.models.agenda import DiaSemana
-        from datetime import time
         
         dia_enum = DiaSemana(request.dia_semana.value)
         hora_parts = request.hora.split(":")
@@ -346,7 +399,6 @@ def listar_horarios_medico(
     db: Session = Depends(get_db)
 ):
     """História 1.1: Listar horários do médico"""
-    from app.gestao_perfis.models.agenda import DiaSemana
     
     dia_enum = DiaSemana(dia_semana.value) if dia_semana else None
     horarios = AgendaService.listar_horarios_medico(db, medico_id, dia_enum)
@@ -460,8 +512,10 @@ def criar_solicitacao_exame(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/solicitacoes", tags=["Exames"])
+@app.get("/solicitacoes", tags=["Exames"], response_model=PaginatedResponse[dict])
 def listar_solicitacoes(
+    page: int = 1,
+    size: int = 10,
     status: Optional[str] = None,
     paciente_id: Optional[int] = None,
     data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
@@ -470,47 +524,62 @@ def listar_solicitacoes(
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(require_medico)
 ):
-    """Listar solicitações com filtros avançados"""
+    """Listar solicitações com filtros avançados e paginação"""
     try:
-        from app.gestao_exames.models.solicitacao_exame import StatusSolicitacao
-        from datetime import datetime
         
-        status_enum = StatusSolicitacao(status) if status else None
-        dt_inicio = datetime.fromisoformat(data_inicio) if data_inicio else None
-        dt_fim = datetime.fromisoformat(data_fim) if data_fim else None
+        # Criar query base
+        query = db.query(SolicitacaoExame).filter(
+            SolicitacaoExame.medicoSolicitante == current_user.id
+        )
         
+        # Aplicar filtros
+        if status:
+            status_enum = StatusSolicitacao(status)
+            query = query.filter(SolicitacaoExame.status == status_enum)
+            
         if paciente_id:
-            solicitacoes = ExameService.listar_solicitacoes_paciente(db, paciente_id, status_enum)
-        else:
-            solicitacoes = ExameService.listar_solicitacoes_medico(db, current_user.id, status_enum)
-        
-        # Aplicar filtros adicionais
-        if dt_inicio:
-            solicitacoes = [s for s in solicitacoes if s.dataSolicitacao >= dt_inicio]
-        if dt_fim:
-            solicitacoes = [s for s in solicitacoes if s.dataSolicitacao <= dt_fim]
+            query = query.filter(SolicitacaoExame.pacienteId == paciente_id)
+            
+        if data_inicio:
+            dt_inicio = datetime.fromisoformat(data_inicio)
+            query = query.filter(SolicitacaoExame.dataSolicitacao >= dt_inicio)
+            
+        if data_fim:
+            dt_fim = datetime.fromisoformat(data_fim)
+            query = query.filter(SolicitacaoExame.dataSolicitacao <= dt_fim)
+            
         if nome_exame:
-            solicitacoes = [s for s in solicitacoes if nome_exame.lower() in s.nomeExame.lower()]
+            query = query.filter(SolicitacaoExame.nomeExame.ilike(f"%{nome_exame}%"))
         
-        return {
-            "solicitacoes": [
-                {
-                    "id": s.id,
-                    "codigo_solicitacao": s.codigoSolicitacao,
-                    "paciente_id": s.pacienteId,
-                    "paciente_nome": s.paciente.usuario.nome if s.paciente else None,
-                    "paciente_cpf": s.paciente.usuario.cpf if s.paciente else None,
-                    "medico_id": s.medicoSolicitante,
-                    "medico_nome": s.medico.usuario.nome if s.medico else None,
-                    "medico_crm": s.medico.crm if s.medico else None,
-                    "nome_exame": s.nomeExame,
-                    "hipotese_diagnostica": s.hipoteseDiagnostica,
-                    "detalhes_preparo": s.detalhesPreparo,
-                    "status": s.status.value,
-                    "data_solicitacao": s.dataSolicitacao.isoformat()
-                } for s in solicitacoes
-            ]
-        }
+        # Ordenar por data mais recente
+        query = query.order_by(SolicitacaoExame.dataSolicitacao.desc())
+        
+        items, total = apply_pagination(query, page, size)
+        
+        solicitacoes_data = [
+            {
+                "id": s.id,
+                "codigo_solicitacao": s.codigoSolicitacao,
+                "paciente_id": s.pacienteId,
+                "paciente_nome": s.paciente.usuario.nome if s.paciente else None,
+                "paciente_cpf": s.paciente.usuario.cpf if s.paciente else None,
+                "medico_id": s.medicoSolicitante,
+                "medico_nome": s.medico.usuario.nome if s.medico else None,
+                "medico_crm": s.medico.crm if s.medico else None,
+                "nome_exame": s.nomeExame,
+                "hipotese_diagnostica": s.hipoteseDiagnostica,
+                "detalhes_preparo": s.detalhesPreparo,
+                "status": s.status.value,
+                "data_solicitacao": s.dataSolicitacao.isoformat()
+            } for s in items
+        ]
+        
+        return PaginatedResponse.create(
+            items=solicitacoes_data,
+            total=total,
+            page=page,
+            size=size
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -553,7 +622,6 @@ def atualizar_status_solicitacao(
 ):
     """Atualizar status da solicitação (ex: cancelar)"""
     try:
-        from app.gestao_exames.models.solicitacao_exame import StatusSolicitacao
         
         solicitacao = ExameService.atualizar_status_solicitacao(
             db, solicitacao_id, StatusSolicitacao(request.status.value)
@@ -588,8 +656,10 @@ def enviar_resultado_exame(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/exames", tags=["Exames"])
+@app.get("/exames", tags=["Exames"], response_model=PaginatedResponse[dict])
 def listar_exames(
+    page: int = 1,
+    size: int = 10,
     paciente_id: Optional[int] = None,
     data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
     data_fim: Optional[str] = None,
@@ -597,73 +667,87 @@ def listar_exames(
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user)
 ):
-    """Listar exames (resultados) com lógica baseada no tipo de usuário"""
+    """Listar exames (resultados) com lógica baseada no tipo de usuário e paginação"""
     try:
-        from datetime import datetime
         
-        # Lógica baseada no tipo de usuário
+        # Criar query base dependendo do tipo de usuário
         if current_user.tipo.value == "medico":
             # Médico vê exames das suas solicitações
+            query = db.query(ResultadoExame).join(
+                SolicitacaoExame, ResultadoExame.solicitacaoId == SolicitacaoExame.id
+            ).filter(
+                SolicitacaoExame.medicoSolicitante == current_user.id
+            )
+            
             if paciente_id:
-                # Se especificou paciente, filtra por paciente nas suas solicitações
-                solicitacoes = ExameService.listar_solicitacoes_medico(db, current_user.id)
-                solicitacoes = [s for s in solicitacoes if s.pacienteId == paciente_id]
-                resultados = []
-                for sol in solicitacoes:
-                    resultados.extend(sol.resultados)
-            else:
-                # Lista todos os resultados das suas solicitações
-                resultados = ExameService.listar_resultados_medico(db, current_user.id)
+                query = query.filter(SolicitacaoExame.pacienteId == paciente_id)
                 
         elif current_user.tipo.value == "paciente":
             # Paciente vê apenas seus próprios exames
-            from app.gestao_perfis.models.paciente import Paciente
+            
             paciente = db.query(Paciente).filter(Paciente.usuarioId == current_user.id).first()
             if not paciente:
                 raise HTTPException(status_code=404, detail="Perfil de paciente não encontrado")
-            resultados = ExameService.listar_resultados_paciente(db, paciente.usuarioId)
+                
+            query = db.query(ResultadoExame).join(
+                SolicitacaoExame, ResultadoExame.solicitacaoId == SolicitacaoExame.id
+            ).filter(
+                SolicitacaoExame.pacienteId == paciente.usuarioId
+            )
             
         else:  # funcionário/admin
-            # Funcionário vê exames que ele criou (por ora, todos os exames)
+            # Funcionário vê todos os exames
+            query = db.query(ResultadoExame).join(
+                SolicitacaoExame, ResultadoExame.solicitacaoId == SolicitacaoExame.id
+            )
+            
             if paciente_id:
-                resultados = ExameService.listar_resultados_paciente(db, paciente_id)
-            else:
-                resultados = ExameService.listar_resultados_funcionario(db, current_user.id)
+                query = query.filter(SolicitacaoExame.pacienteId == paciente_id)
         
         # Aplicar filtros adicionais
-        dt_inicio = datetime.fromisoformat(data_inicio) if data_inicio else None
-        dt_fim = datetime.fromisoformat(data_fim) if data_fim else None
-        
-        if dt_inicio:
-            resultados = [r for r in resultados if r.dataRealizacao >= dt_inicio]
-        if dt_fim:
-            resultados = [r for r in resultados if r.dataRealizacao <= dt_fim]
+        if data_inicio:
+            dt_inicio = datetime.fromisoformat(data_inicio)
+            query = query.filter(ResultadoExame.dataRealizacao >= dt_inicio)
+            
+        if data_fim:
+            dt_fim = datetime.fromisoformat(data_fim)
+            query = query.filter(ResultadoExame.dataRealizacao <= dt_fim)
+            
         if nome_exame:
-            resultados = [r for r in resultados if nome_exame.lower() in r.solicitacao.nomeExame.lower()]
+            query = query.filter(SolicitacaoExame.nomeExame.ilike(f"%{nome_exame}%"))
         
-        exames = []
-        for resultado in resultados:
-            if resultado.solicitacao:  # Garante que há solicitação associada
-                exames.append({
-                    "id": resultado.id,
-                    "solicitacao_id": resultado.solicitacao.id,
-                    "codigo_solicitacao": resultado.solicitacao.codigoSolicitacao,
-                    "paciente_id": resultado.solicitacao.pacienteId,
-                    "paciente_nome": resultado.solicitacao.paciente.usuario.nome if resultado.solicitacao.paciente else None,
-                    "paciente_cpf": resultado.solicitacao.paciente.usuario.cpf if resultado.solicitacao.paciente else None,
-                    "medico_id": resultado.solicitacao.medicoSolicitante,
-                    "medico_nome": resultado.solicitacao.medico.usuario.nome if resultado.solicitacao.medico else None,
-                    "medico_crm": resultado.solicitacao.medico.crm if resultado.solicitacao.medico else None,
-                    "nome_exame": resultado.solicitacao.nomeExame,
-                    "data_realizacao": resultado.dataRealizacao.isoformat(),
-                    "data_upload": resultado.dataUpload.isoformat(),
-                    "nome_laboratorio": resultado.nomeLaboratorio,
-                    "nome_arquivo": resultado.nomeArquivo,
-                    "url_arquivo": resultado.arquivoUrl,
-                    "observacoes": resultado.observacoes
-                })
+        # Ordenar por data mais recente
+        query = query.order_by(ResultadoExame.dataRealizacao.desc())
         
-        return {"exames": exames}
+        items, total = apply_pagination(query, page, size)
+        
+        exames_data = [
+            {
+                "id": resultado.id,
+                "solicitacao_id": resultado.solicitacao.id,
+                "codigo_solicitacao": resultado.solicitacao.codigoSolicitacao,
+                "paciente_id": resultado.solicitacao.pacienteId,
+                "paciente_nome": resultado.solicitacao.paciente.usuario.nome if resultado.solicitacao.paciente else None,
+                "paciente_cpf": resultado.solicitacao.paciente.usuario.cpf if resultado.solicitacao.paciente else None,
+                "medico_id": resultado.solicitacao.medicoSolicitante,
+                "medico_nome": resultado.solicitacao.medico.usuario.nome if resultado.solicitacao.medico else None,
+                "medico_crm": resultado.solicitacao.medico.crm if resultado.solicitacao.medico else None,
+                "nome_exame": resultado.solicitacao.nomeExame,
+                "data_realizacao": resultado.dataRealizacao.isoformat(),
+                "data_upload": resultado.dataUpload.isoformat(),
+                "nome_laboratorio": resultado.nomeLaboratorio,
+                "nome_arquivo": resultado.nomeArquivo,
+                "url_arquivo": resultado.arquivoUrl,
+                "observacoes": resultado.observacoes
+            } for resultado in items
+        ]
+        
+        return PaginatedResponse.create(
+            items=exames_data,
+            total=total,
+            page=page,
+            size=size
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -680,7 +764,6 @@ def visualizar_prontuario(
 ):
     """História 2.1: Visualizar prontuário com filtros"""
     try:
-        from app.gestao_consultas.models.log_prontuario import TipoEvento
         
         tipo_enum = TipoEvento(tipo_evento.value) if tipo_evento else None
         dt_inicio = datetime.fromisoformat(data_inicio) if data_inicio else None
@@ -737,8 +820,10 @@ def criar_laudo(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.get("/laudos", tags=["Laudos"])
+@app.get("/laudos", tags=["Laudos"], response_model=PaginatedResponse[dict])
 def listar_laudos(
+    page: int = 1,
+    size: int = 10,
     paciente_id: Optional[int] = None,
     status: Optional[str] = None,
     data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
@@ -747,41 +832,84 @@ def listar_laudos(
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user)
 ):
-    """Listar laudos com filtros avançados"""
+    """Listar laudos com filtros avançados e paginação"""
     try:
-        from app.gestao_exames.models.laudo import StatusLaudo
-        from app.gestao_exames.models.laudo_resultado import LaudoResultado
-        from app.gestao_exames.models.resultado_exame import ResultadoExame
-        from datetime import datetime
         
-        status_enum = StatusLaudo(status) if status else None
-        dt_inicio = datetime.fromisoformat(data_inicio) if data_inicio else None
-        dt_fim = datetime.fromisoformat(data_fim) if data_fim else None
-        
-        # Se for paciente, lista apenas seus próprios laudos
+        # Criar query base dependendo do tipo de usuário
         if current_user.tipo.value == "paciente":
-            from app.gestao_perfis.models.paciente import Paciente
+            # Paciente vê apenas seus próprios laudos
+            
             paciente = db.query(Paciente).filter(Paciente.usuarioId == current_user.id).first()
-            if paciente:
-                paciente_id = paciente.usuarioId
-            laudos = LaudoService.listar_laudos_paciente(db, paciente_id, status_enum)
-        elif paciente_id:
-            # Médico listando laudos de um paciente específico
-            laudos = LaudoService.listar_laudos_paciente(db, paciente_id, status_enum)
-        else:
-            # Médico listando seus próprios laudos
-            laudos = LaudoService.listar_laudos_medico(db, current_user.id, status_enum)
+            if not paciente:
+                raise HTTPException(status_code=404, detail="Perfil de paciente não encontrado")
+                
+            # Query através dos resultados dos exames do paciente
+            query = db.query(Laudo).join(
+                LaudoResultado, Laudo.id == LaudoResultado.laudoId
+            ).join(
+                ResultadoExame, LaudoResultado.resultadoExameId == ResultadoExame.id
+            ).join(
+                SolicitacaoExame, ResultadoExame.solicitacaoId == SolicitacaoExame.id
+            ).filter(
+                SolicitacaoExame.pacienteId == paciente.usuarioId
+            ).distinct()
+            
+        elif current_user.tipo.value == "medico":
+            # Médico vê laudos que ele criou ou dos seus pacientes
+            if paciente_id:
+                # Médico listando laudos de um paciente específico
+                query = db.query(Laudo).join(
+                    LaudoResultado, Laudo.id == LaudoResultado.laudoId
+                ).join(
+                    ResultadoExame, LaudoResultado.resultadoExameId == ResultadoExame.id
+                ).join(
+                    SolicitacaoExame, ResultadoExame.solicitacaoId == SolicitacaoExame.id
+                ).filter(
+                    SolicitacaoExame.pacienteId == paciente_id,
+                    SolicitacaoExame.medicoSolicitante == current_user.id
+                ).distinct()
+            else:
+                # Médico listando seus próprios laudos
+                query = db.query(Laudo).filter(Laudo.medicoId == current_user.id)
+                
+        else:  # funcionário/admin
+            # Funcionário vê todos os laudos
+            query = db.query(Laudo)
+            if paciente_id:
+                query = query.join(
+                    LaudoResultado, Laudo.id == LaudoResultado.laudoId
+                ).join(
+                    ResultadoExame, LaudoResultado.resultadoExameId == ResultadoExame.id
+                ).join(
+                    SolicitacaoExame, ResultadoExame.solicitacaoId == SolicitacaoExame.id
+                ).filter(
+                    SolicitacaoExame.pacienteId == paciente_id
+                ).distinct()
         
         # Aplicar filtros adicionais
-        if dt_inicio:
-            laudos = [l for l in laudos if l.dataEmissao >= dt_inicio]
-        if dt_fim:
-            laudos = [l for l in laudos if l.dataEmissao <= dt_fim]
+        if status:
+            status_enum = StatusLaudo(status)
+            query = query.filter(Laudo.status == status_enum)
+            
+        if data_inicio:
+            dt_inicio = datetime.fromisoformat(data_inicio)
+            query = query.filter(Laudo.dataEmissao >= dt_inicio)
+            
+        if data_fim:
+            dt_fim = datetime.fromisoformat(data_fim)
+            query = query.filter(Laudo.dataEmissao <= dt_fim)
+            
         if titulo:
-            laudos = [l for l in laudos if titulo.lower() in l.titulo.lower()]
+            query = query.filter(Laudo.titulo.ilike(f"%{titulo}%"))
         
-        resultado_laudos = []
-        for laudo in laudos:
+        # Ordenar por data mais recente
+        query = query.order_by(Laudo.dataEmissao.desc())
+        
+        items, total = apply_pagination(query, page, size)
+        
+        # Montar dados dos laudos com exames associados
+        laudos_data = []
+        for laudo in items:
             # Busca exames associados
             laudo_resultados = db.query(LaudoResultado).filter(
                 LaudoResultado.laudoId == laudo.id
@@ -812,7 +940,7 @@ def listar_laudos(
                         }
             
             if paciente_info:
-                resultado_laudos.append({
+                laudos_data.append({
                     "id": laudo.id,
                     "paciente_id": paciente_info["paciente_id"],
                     "paciente_nome": paciente_info["paciente_nome"],
@@ -827,7 +955,12 @@ def listar_laudos(
                     "exames": exames
                 })
         
-        return {"laudos": resultado_laudos}
+        return PaginatedResponse.create(
+            items=laudos_data,
+            total=total,
+            page=page,
+            size=size
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -840,8 +973,6 @@ def obter_laudo(
 ):
     """Obter detalhes de um laudo"""
     try:
-        from app.gestao_exames.models.laudo_resultado import LaudoResultado
-        from app.gestao_exames.models.resultado_exame import ResultadoExame
         
         laudo = LaudoService.buscar_laudo_por_id(db, laudo_id)
         
@@ -943,11 +1074,6 @@ def obter_estatisticas_dashboard(
 ):
     """Estatísticas do dashboard para médicos"""
     try:
-        from datetime import datetime, timedelta
-        from sqlalchemy import func, extract
-        from app.gestao_exames.models.solicitacao_exame import SolicitacaoExame
-        from app.gestao_exames.models.resultado_exame import ResultadoExame
-        from app.gestao_exames.models.laudo import Laudo
         
         # Calcula data de início baseado no período
         data_fim = datetime.utcnow()
@@ -1044,5 +1170,4 @@ def health_check():
 
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
