@@ -172,3 +172,18 @@ cython_debug/
 #.idea/
 
 # End of https://www.toptal.com/developers/gitignore/api/django
+
+# ========== Arquivos de Teste/Desenvolvimento ==========
+# Arquivos JSON de teste usados durante desenvolvimento
+test_*.json
+*_test.json
+test-*.json
+
+# Scripts temporários de desenvolvimento
+fix_*.py
+temp_*.py
+debug_*.py
+
+# Logs de desenvolvimento
+*.log.local
+development.log
