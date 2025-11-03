@@ -215,28 +215,28 @@ T = TypeVar('T')
 
 class PaginationParams(BaseModel):
     """Parâmetros de paginação"""
-    page: int = Field(1, ge=1, description="Número da página (começa em 1)")
-    size: int = Field(10, ge=1, le=100, description="Tamanho da página (máximo 100)")
+    page: int = Field(1, ge=1, description="Número da página")
+    limit: int = Field(10, ge=1, le=100, description="Tamanho da página (máximo 100)")
 
 class PaginatedResponse(BaseModel, Generic[T]):
     """Resposta paginada genérica"""
     items: List[T]
     total: int
     page: int
-    size: int
+    limit: int
     pages: int
     has_next: bool
     has_prev: bool
 
     @classmethod
-    def create(cls, items: List[T], total: int, page: int, size: int):
+    def create(cls, items: List[T], total: int, page: int, limit: int):
         """Cria uma resposta paginada"""
-        pages = (total + size - 1) // size  # Ceiling division
+        pages = (total + limit - 1) // limit  # Ceiling division
         return cls(
             items=items,
             total=total,
             page=page,
-            size=size,
+            limit=limit,  # Usa 'limit' no response conforme documentação
             pages=pages,
             has_next=page < pages,
             has_prev=page > 1
