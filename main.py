@@ -77,11 +77,11 @@ security = HTTPBearer()
 # FUNÇÕES AUXILIARES
 # ==========================================
 
-def apply_pagination(query, page: int, size: int):
+def apply_pagination(query, page: int, limit: int):
     """Aplica paginação a uma query SQLAlchemy"""
-    offset = (page - 1) * size
+    offset = (page - 1) * limit
     total = query.count()
-    items = query.offset(offset).limit(size).all()
+    items = query.offset(offset).limit(limit).all()
     return items, total
 
 
@@ -210,13 +210,13 @@ def criar_especialidade(request: CriarEspecialidadeRequest, db: Session = Depend
 @app.get("/especialidades", tags=["Especialidades"], response_model=PaginatedResponse[dict])
 def listar_especialidades(
     page: int = 1,
-    size: int = 10,
+    limit: int = 10,
     db: Session = Depends(get_db)
 ):
     """Listar todas especialidades com paginação"""
     
     query = db.query(Especialidade)
-    items, total = apply_pagination(query, page, size)
+    items, total = apply_pagination(query, page, limit)
     
     especialidades_data = [{"id": e.id, "nome": e.nome} for e in items]
     
@@ -224,7 +224,7 @@ def listar_especialidades(
         items=especialidades_data,
         total=total,
         page=page,
-        size=size
+        limit=limit
     )
 
 
@@ -328,7 +328,7 @@ def buscar_sumario_paciente(paciente_id: int, db: Session = Depends(get_db)):
 @app.get("/pacientes", tags=["Pacientes"], response_model=PaginatedResponse[dict])
 def listar_pacientes(
     page: int = 1,
-    size: int = 10,
+    limit: int = 10,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(require_medico)  # Apenas médicos têm acesso
 ):
@@ -344,7 +344,7 @@ def listar_pacientes(
             SolicitacaoExame.medicoSolicitante == current_user.id
         ).distinct()
         
-        items, total = apply_pagination(query, page, size)
+        items, total = apply_pagination(query, page, limit)
         
         pacientes_data = [
             {
@@ -362,7 +362,7 @@ def listar_pacientes(
             items=pacientes_data,
             total=total,
             page=page,
-            size=size
+            limit=limit
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -515,7 +515,7 @@ def criar_solicitacao_exame(
 @app.get("/solicitacoes", tags=["Exames"], response_model=PaginatedResponse[dict])
 def listar_solicitacoes(
     page: int = 1,
-    size: int = 10,
+    limit: int = 10,
     status: Optional[str] = None,
     paciente_id: Optional[int] = None,
     data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
@@ -554,7 +554,7 @@ def listar_solicitacoes(
         # Ordenar por data mais recente
         query = query.order_by(SolicitacaoExame.dataSolicitacao.desc())
         
-        items, total = apply_pagination(query, page, size)
+        items, total = apply_pagination(query, page, limit)
         
         solicitacoes_data = [
             {
@@ -578,7 +578,7 @@ def listar_solicitacoes(
             items=solicitacoes_data,
             total=total,
             page=page,
-            size=size
+            limit=limit
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -659,7 +659,7 @@ def enviar_resultado_exame(
 @app.get("/exames", tags=["Exames"], response_model=PaginatedResponse[dict])
 def listar_exames(
     page: int = 1,
-    size: int = 10,
+    limit: int = 10,
     paciente_id: Optional[int] = None,
     data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
     data_fim: Optional[str] = None,
@@ -719,7 +719,7 @@ def listar_exames(
         # Ordenar por data mais recente
         query = query.order_by(ResultadoExame.dataRealizacao.desc())
         
-        items, total = apply_pagination(query, page, size)
+        items, total = apply_pagination(query, page, limit)
         
         exames_data = [
             {
@@ -746,7 +746,7 @@ def listar_exames(
             items=exames_data,
             total=total,
             page=page,
-            size=size
+            limit=limit
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -823,7 +823,7 @@ def criar_laudo(
 @app.get("/laudos", tags=["Laudos"], response_model=PaginatedResponse[dict])
 def listar_laudos(
     page: int = 1,
-    size: int = 10,
+    limit: int = 10,
     paciente_id: Optional[int] = None,
     status: Optional[str] = None,
     data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
@@ -905,7 +905,7 @@ def listar_laudos(
         # Ordenar por data mais recente
         query = query.order_by(Laudo.dataEmissao.desc())
         
-        items, total = apply_pagination(query, page, size)
+        items, total = apply_pagination(query, page, limit)
         
         # Montar dados dos laudos com exames associados
         laudos_data = []
@@ -959,7 +959,7 @@ def listar_laudos(
             items=laudos_data,
             total=total,
             page=page,
-            size=size
+            limit=limit
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
