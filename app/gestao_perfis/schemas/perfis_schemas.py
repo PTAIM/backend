@@ -1,6 +1,7 @@
 """
 Schemas Pydantic para Gestão de Perfis
 """
+
 from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List, Any, Generic, TypeVar
 from enum import Enum
@@ -8,15 +9,18 @@ from enum import Enum
 
 # ========== Enums para validação ==========
 
+
 class TipoUsuarioEnum(str, Enum):
     """Tipos de usuário disponíveis"""
+
     PACIENTE = "paciente"
     MEDICO = "medico"
-    ADMIN = "admin"
+    FUNCIONARIO = "funcionario"
 
 
 class DiaSemanaEnum(str, Enum):
     """Dias da semana"""
+
     SEGUNDA = "Segunda"
     TERCA = "Terça"
     QUARTA = "Quarta"
@@ -28,13 +32,19 @@ class DiaSemanaEnum(str, Enum):
 
 # ========== Schemas de Request ==========
 
+
 class CadastroUsuarioRequest(BaseModel):
     nome: str = Field(..., description="Nome completo do usuário", min_length=3)
     email: EmailStr = Field(..., description="Email válido")
-    senha: str = Field(..., description="Senha (máximo 72 caracteres)", min_length=6, max_length=72)
-    cpf: str = Field(..., description="CPF (apenas números)", min_length=11, max_length=11)
+    senha: str = Field(
+        ..., description="Senha (máximo 72 caracteres)", min_length=6, max_length=72
+    )
+    cpf: str = Field(
+        ..., description="CPF (apenas números)", min_length=11, max_length=11
+    )
     tipo: TipoUsuarioEnum = Field(..., description="Tipo de usuário")
     telefone: Optional[str] = Field(None, description="Telefone (opcional)")
+    crm: Optional[str] = Field(None, description="CRM (opcional para médicos)")
 
     class Config:
         json_schema_extra = {
@@ -44,7 +54,8 @@ class CadastroUsuarioRequest(BaseModel):
                 "senha": "senha123",
                 "cpf": "12345678900",
                 "tipo": "paciente",
-                "telefone": "11999999999"
+                "telefone": "11999999999",
+                "crm": "CRM/AL 12839",
             }
         }
 
@@ -55,10 +66,7 @@ class LoginRequest(BaseModel):
 
     class Config:
         json_schema_extra = {
-            "example": {
-                "email": "joao@email.com",
-                "senha": "senha123"
-            }
+            "example": {"email": "joao@email.com", "senha": "senha123"}
         }
 
 
@@ -66,8 +74,12 @@ class CriarPerfilMedicoRequest(BaseModel):
     usuario_id: int = Field(..., description="ID do usuário")
     crm: str = Field(..., description="CRM do médico")
     biografia: Optional[str] = Field(None, description="Biografia profissional")
-    duracao_consulta: Optional[float] = Field(None, description="Duração padrão da consulta em minutos")
-    link_sala_virtual: Optional[str] = Field(None, description="Link da sala virtual para teleconsultas")
+    duracao_consulta: Optional[float] = Field(
+        None, description="Duração padrão da consulta em minutos"
+    )
+    link_sala_virtual: Optional[str] = Field(
+        None, description="Link da sala virtual para teleconsultas"
+    )
 
     class Config:
         json_schema_extra = {
@@ -76,14 +88,16 @@ class CriarPerfilMedicoRequest(BaseModel):
                 "crm": "12345-SP",
                 "biografia": "Médico cardiologista com 10 anos de experiência",
                 "duracao_consulta": 30.0,
-                "link_sala_virtual": "https://meet.google.com/abc-defg-hij"
+                "link_sala_virtual": "https://meet.google.com/abc-defg-hij",
             }
         }
 
 
 class AtualizarPerfilMedicoRequest(BaseModel):
     biografia: Optional[str] = Field(None, description="Biografia profissional")
-    duracao_consulta: Optional[float] = Field(None, description="Duração padrão da consulta em minutos")
+    duracao_consulta: Optional[float] = Field(
+        None, description="Duração padrão da consulta em minutos"
+    )
     link_sala_virtual: Optional[str] = Field(None, description="Link da sala virtual")
 
     class Config:
@@ -91,7 +105,7 @@ class AtualizarPerfilMedicoRequest(BaseModel):
             "example": {
                 "biografia": "Médico cardiologista especializado em arritmias",
                 "duracao_consulta": 45.0,
-                "link_sala_virtual": "https://meet.google.com/xyz-abcd-efg"
+                "link_sala_virtual": "https://meet.google.com/xyz-abcd-efg",
             }
         }
 
@@ -104,16 +118,14 @@ class CriarEspecialidadeRequest(BaseModel):
     nome: str = Field(..., description="Nome da especialidade", min_length=3)
 
     class Config:
-        json_schema_extra = {
-            "example": {
-                "nome": "Cardiologia"
-            }
-        }
+        json_schema_extra = {"example": {"nome": "Cardiologia"}}
 
 
 class CriarPerfilPacienteRequest(BaseModel):
     usuario_id: int = Field(..., description="ID do usuário")
-    data_nascimento: Optional[str] = Field(None, description="Data de nascimento (YYYY-MM-DD)")
+    data_nascimento: Optional[str] = Field(
+        None, description="Data de nascimento (YYYY-MM-DD)"
+    )
     endereco: Optional[str] = Field(None, description="Endereço completo")
 
     class Config:
@@ -121,17 +133,20 @@ class CriarPerfilPacienteRequest(BaseModel):
             "example": {
                 "usuario_id": 2,
                 "data_nascimento": "1990-05-15",
-                "endereco": "Rua das Flores, 123 - São Paulo/SP"
+                "endereco": "Rua das Flores, 123 - São Paulo/SP",
             }
         }
 
 
 class CriarPacienteCompletoRequest(BaseModel):
     """Schema para criar paciente completo (usuário + perfil + sumário)"""
+
     nome: str = Field(..., description="Nome completo do paciente", min_length=3)
     email: EmailStr = Field(..., description="Email válido")
     telefone: str = Field(..., description="Telefone")
-    cpf: str = Field(..., description="CPF (apenas números)", min_length=11, max_length=11)
+    cpf: str = Field(
+        ..., description="CPF (apenas números)", min_length=11, max_length=11
+    )
     data_nascimento: str = Field(..., description="Data de nascimento (YYYY-MM-DD)")
     sumario_saude: Optional[dict] = Field(None, description="Sumário de saúde inicial")
 
@@ -141,19 +156,21 @@ class CriarPacienteCompletoRequest(BaseModel):
                 "nome": "Maria Santos",
                 "email": "maria@email.com",
                 "telefone": "11999999999",
-                "cpf": "12345678900", 
+                "cpf": "12345678900",
                 "data_nascimento": "1985-03-20",
                 "sumario_saude": {
                     "alergias": "Nenhuma conhecida",
                     "medicacoes": "Nenhuma",
-                    "historico_doencas": "Nenhum"
-                }
+                    "historico_doencas": "Nenhum",
+                },
             }
         }
 
 
 class CriarSumarioSaudeRequest(BaseModel):
-    historico_doencas: Optional[str] = Field(None, description="Histórico de doenças preexistentes")
+    historico_doencas: Optional[str] = Field(
+        None, description="Histórico de doenças preexistentes"
+    )
     alergias: Optional[str] = Field(None, description="Lista de alergias")
     medicacoes: Optional[str] = Field(None, description="Medicamentos de uso contínuo")
 
@@ -162,7 +179,7 @@ class CriarSumarioSaudeRequest(BaseModel):
             "example": {
                 "historico_doencas": "Hipertensão, Diabetes tipo 2",
                 "alergias": "Penicilina, Frutos do mar",
-                "medicacoes": "Losartana 50mg, Metformina 850mg"
+                "medicacoes": "Losartana 50mg, Metformina 850mg",
             }
         }
 
@@ -175,11 +192,13 @@ class AtualizarSumarioSaudeRequest(BaseModel):
 
 # ========== Schemas de Response ==========
 
+
 class UsuarioResponse(BaseModel):
     id: int
     nome: str
     email: str
     tipo: str
+    avatar: str
 
     class Config:
         from_attributes = True
@@ -193,6 +212,7 @@ class LoginResponse(BaseModel):
 
 class TokenData(BaseModel):
     """Schema para dados do token JWT"""
+
     sub: Optional[str] = None
     email: Optional[str] = None
     tipo: Optional[str] = None
@@ -211,15 +231,19 @@ class MedicoResponse(BaseModel):
 
 # ========== Schemas de Paginação ==========
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 class PaginationParams(BaseModel):
     """Parâmetros de paginação"""
+
     page: int = Field(1, ge=1, description="Número da página")
     limit: int = Field(10, ge=1, le=100, description="Tamanho da página (máximo 100)")
 
+
 class PaginatedResponse(BaseModel, Generic[T]):
     """Resposta paginada genérica"""
+
     items: List[T]
     total: int
     page: int
@@ -239,5 +263,5 @@ class PaginatedResponse(BaseModel, Generic[T]):
             limit=limit,  # Usa 'limit' no response conforme documentação
             pages=pages,
             has_next=page < pages,
-            has_prev=page > 1
+            has_prev=page > 1,
         )
