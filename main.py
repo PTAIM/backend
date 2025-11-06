@@ -6,6 +6,7 @@ Aplicação: Sistema de Telemedicina
 import base64
 import uuid
 from dotenv import load_dotenv
+from pathlib import Path
 
 from app.analises_diagnosticos.schemas.analises_schemas import (
     AnalisarImagemRequest,
@@ -1640,7 +1641,8 @@ async def analisar_imagem(request: AnalisarImagemRequest):
 
 
 def _fetch_image_bytes(nome_arquivo: str) -> bytes:
-    file_path = os.path.join(UPLOAD_DIRECTORY_LOCAL, nome_arquivo)
+    filename = Path(nome_arquivo).name
+    file_path = os.path.join(UPLOAD_DIRECTORY_LOCAL, filename)
 
     with open(file_path, "rb") as f:
         return f.read()
