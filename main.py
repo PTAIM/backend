@@ -3,6 +3,7 @@ Rotas Dummy para Teste de Todos os Services
 Aplicação: Sistema de Telemedicina
 """
 
+import uuid
 from dotenv import load_dotenv
 
 # Carrega variáveis de ambiente do arquivo .env
@@ -11,12 +12,14 @@ load_dotenv()
 # ========== Imports Padrão ==========
 import uvicorn
 import os
+import shutil
 from datetime import datetime, time, timedelta
 from typing import Optional
 
 # ========== Imports FastAPI/SQLAlchemy ==========
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, File, Form, HTTPException, UploadFile
 from fastapi.security import HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract, or_
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +65,7 @@ from app.gestao_exames.schemas.exames_schemas import (
     CriarLaudoRequest,
     AtualizarLaudoRequest,
     AtualizarStatusSolicitacaoRequest,
+    GetExamesRequest,
 )
 
 # ========== Imports Services ==========
@@ -119,6 +123,18 @@ app.add_middleware(
 )
 
 
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIRECTORY_LOCAL = os.path.join(PROJECT_ROOT, "uploads_locais", "resultados")
+
+os.makedirs(UPLOAD_DIRECTORY_LOCAL, exist_ok=True)
+
+BASE_URL_LOCAL = "http://localhost:8001/media/resultados"
+
+app.mount(
+    "/media/resultados",
+    StaticFiles(directory=UPLOAD_DIRECTORY_LOCAL),
+    name="media-resultados",
+)
 # ==========================================
 # FUNÇÕES AUXILIARES
 # ==========================================
@@ -405,6 +421,7 @@ def buscar_sumario_paciente(paciente_id: int, db: Session = Depends(get_db)):
 
 @app.get("/pacientes", tags=["Pacientes"], response_model=PaginatedResponse[dict])
 def listar_pacientes(
+    search: Optional[str] = None,
     page: int = 1,
     limit: int = 10,
     db: Session = Depends(get_db),
@@ -420,6 +437,16 @@ def listar_pacientes(
             .filter(SolicitacaoExame.medicoSolicitante == current_user.id)
             .distinct()
         )
+
+        if search:
+            search_term = f"%{search}%"
+            query = query.filter(
+                or_(
+                    Usuario.nome.ilike(search_term),
+                    Usuario.email.ilike(search_term),
+                    Usuario.cpf.ilike(search_term),
+                )
+            )
 
         items, total = apply_pagination(query, page, limit)
 
@@ -825,31 +852,75 @@ def atualizar_status_solicitacao(
 
 @app.post("/resultados", tags=["Exames"])
 def enviar_resultado_exame(
-    request: EnviarResultadoExameRequest,
+    codigo_solicitacao: str = Form(...),
+    data_realizacao: datetime = Form(...),
+    nome_laboratorio: str = Form(...),
+    observacoes: str | None = Form(None),
+    arquivo: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: Usuario = Depends(
-        require_funcionario
-    ),  # Apenas funcionários podem enviar resultados
+    current_user: Usuario = Depends(require_funcionario),
 ):
     """História 1.2: Funcionário envia resultado de exame"""
-    try:
-        # Por ora, usando URLs de placeholder para arquivos
-        # Em implementação futura, integrar com serviço de upload de arquivos
-        arquivo_url = "/uploads/temp.pdf"
-        nome_arquivo = "resultado.pdf"
 
+    try:
+        nome_arquivo_original = arquivo.filename
+        if not nome_arquivo_original:
+            raise HTTPException(status_code=500, detail="Arquivo sem nome")
+        file_extension = nome_arquivo_original.split(".")[-1]
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+
+        file_path = os.path.join(UPLOAD_DIRECTORY_LOCAL, unique_filename)
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(arquivo.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar o arquivo: {e}")
+    finally:
+        arquivo.file.close()
+
+    arquivo_url_publica = f"{BASE_URL_LOCAL}/{unique_filename}"
+
+    try:
         resultado = ExameService.enviar_resultado_exame(
             db,
-            request.codigo_solicitacao,
-            request.data_realizacao,
-            request.nome_laboratorio,
-            arquivo_url,
-            nome_arquivo,
-            request.observacoes,
+            codigo_solicitacao,
+            data_realizacao,
+            nome_laboratorio,
+            arquivo_url_publica,
+            nome_arquivo_original,
+            observacoes,
         )
         return {"message": "Resultado enviado", "resultado_id": resultado.id}
     except Exception as e:
+        os.remove(file_path)
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/exames/detalhes", tags=["Exames"])
+def obter_arquivos_exames(
+    request: GetExamesRequest,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(require_medico),
+):
+    resultados = (
+        db.query(ResultadoExame).filter(ResultadoExame.id.in_(request.exame_ids)).all()
+    )
+
+    if not resultados:
+        raise HTTPException(status_code=404, detail="Exames não encontrados")
+
+    return [
+        {
+            "id": resultado.id,
+            "data_realizacao": resultado.dataRealizacao.isoformat(),
+            "data_upload": resultado.dataUpload.isoformat(),
+            "nome_laboratorio": resultado.nomeLaboratorio,
+            "nome_arquivo": resultado.nomeArquivo,
+            "url_arquivo": resultado.arquivoUrl,
+            "observacoes": resultado.observacoes,
+        }
+        for resultado in resultados
+    ]
 
 
 @app.get("/exames", tags=["Exames"], response_model=PaginatedResponse[dict])
@@ -859,7 +930,7 @@ def listar_exames(
     paciente_id: Optional[int] = None,
     data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
     data_fim: Optional[str] = None,
-    nome_exame: Optional[str] = None,
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user),
 ):
@@ -918,8 +989,8 @@ def listar_exames(
             dt_fim = datetime.fromisoformat(data_fim)
             query = query.filter(ResultadoExame.dataRealizacao <= dt_fim)
 
-        if nome_exame:
-            query = query.filter(SolicitacaoExame.nomeExame.ilike(f"%{nome_exame}%"))
+        if search:
+            query = query.filter(SolicitacaoExame.nomeExame.ilike(f"%{search}%"))
 
         # Ordenar por data mais recente
         query = query.order_by(ResultadoExame.dataRealizacao.desc())
@@ -1090,7 +1161,7 @@ def listar_laudos(
     status: Optional[str] = None,
     data_inicio: Optional[str] = None,  # Formato "YYYY-MM-DD"
     data_fim: Optional[str] = None,
-    titulo: Optional[str] = None,
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user),
 ):
@@ -1120,6 +1191,7 @@ def listar_laudos(
                     ResultadoExame.solicitacaoId == SolicitacaoExame.id,
                 )
                 .filter(SolicitacaoExame.pacienteId == paciente.usuarioId)
+                .filter(Laudo.status == StatusLaudo.FINALIZADO)
                 .distinct()
             )
 
@@ -1179,8 +1251,8 @@ def listar_laudos(
             dt_fim = datetime.fromisoformat(data_fim)
             query = query.filter(Laudo.dataEmissao <= dt_fim)
 
-        if titulo:
-            query = query.filter(Laudo.titulo.ilike(f"%{titulo}%"))
+        if search:
+            query = query.filter(Laudo.titulo.ilike(f"%{search}%"))
 
         # Ordenar por data mais recente
         query = query.order_by(Laudo.dataEmissao.desc())
@@ -1249,6 +1321,7 @@ def listar_laudos(
             items=laudos_data, total=total, page=page, limit=limit
         )
     except Exception as e:
+        print(e)
         raise HTTPException(status_code=400, detail=str(e))
 
 
