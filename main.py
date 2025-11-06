@@ -881,7 +881,7 @@ def atualizar_status_solicitacao(
 
 
 @app.post("/resultados", tags=["Exames"])
-def enviar_resultado_exame(
+async def enviar_resultado_exame(
     codigo_solicitacao: str = Form(...),
     data_realizacao: datetime = Form(...),
     nome_laboratorio: str = Form(...),
