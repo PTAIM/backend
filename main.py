@@ -3,10 +3,16 @@ Rotas Dummy para Teste de Todos os Services
 Aplicação: Sistema de Telemedicina
 """
 
+import base64
 import uuid
 from dotenv import load_dotenv
 
+from app.analises_diagnosticos.schemas.analises_schemas import (
+    AnalisarImagemRequest,
+    ImageAnalysisRequest,
+)
 from app.rabbit.producers import (
+    enviar_analise_imagem,
     enviar_email_cadastro_paciente,
     enviar_email_solicitacao_exame,
     enviar_laudo_disponivel,
@@ -138,7 +144,7 @@ UPLOAD_DIRECTORY_LOCAL = os.path.join(PROJECT_ROOT, "uploads_locais", "resultado
 
 os.makedirs(UPLOAD_DIRECTORY_LOCAL, exist_ok=True)
 
-BASE_URL_LOCAL = "http://localhost:8001/media/resultados"
+BASE_URL_LOCAL = "http://localhost:8000/media/resultados"
 
 app.mount(
     "/media/resultados",
@@ -924,12 +930,12 @@ async def enviar_resultado_exame(
         solicitacao = resultado.solicitacao
 
         await enviar_notificacao_exame_disponivel(
-            data_realizacao=request.data_realizacao.isoformat(),
+            data_realizacao=data_realizacao.isoformat(),
             nome_medico=solicitacao.medico.usuario.nome,
             nome_paciente=solicitacao.paciente.usuario.nome,
             email_medico=solicitacao.medico.usuario.email,
             nome_exame=solicitacao.nomeExame,
-            codigo_solicitacao=request.codigo_solicitacao,
+            codigo_solicitacao=codigo_solicitacao,
         )
         return {"message": "Resultado enviado", "resultado_id": resultado.id}
     except Exception as e:
@@ -1611,6 +1617,33 @@ def obter_estatisticas_dashboard(
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==========================================
+# ROTA DE IA
+# ==========================================
+
+
+@app.post("/ia/analisar_imagem", tags=["IA"])
+async def analisar_imagem(request: AnalisarImagemRequest):
+    image_bytes = _fetch_image_bytes(request.nome_arquivo)
+    base64_image = base64.b64encode(image_bytes).decode("utf-8")
+
+    r = ImageAnalysisRequest(
+        image_bytes=base64_image,
+        mime_type="image/png",
+    )
+
+    response = await enviar_analise_imagem(r)
+
+    return response
+
+
+def _fetch_image_bytes(nome_arquivo: str) -> bytes:
+    file_path = os.path.join(UPLOAD_DIRECTORY_LOCAL, nome_arquivo)
+
+    with open(file_path, "rb") as f:
+        return f.read()
 
 
 # ==========================================

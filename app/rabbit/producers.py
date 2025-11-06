@@ -2,7 +2,12 @@ from enum import Enum
 from typing import Any, Dict, Optional
 
 import pydantic
+from app.analises_diagnosticos.schemas.analises_schemas import (
+    ImageAnalysisRequest,
+    ImageAnalysisResponse,
+)
 from app.rabbit.broker import rabbit_router
+from faststream.rabbit import RabbitMessage
 import logging
 
 logger = logging.getLogger(__name__)
@@ -171,3 +176,18 @@ async def enviar_laudo_disponivel(
     await rabbit_router.broker.publish(mensagem, EMAIL_QUEUE)
 
     print("Email de notificação de laudo disponível enviado para a fila.")
+
+
+async def enviar_analise_imagem(request: ImageAnalysisRequest):
+    """Envia uma solicitação de análise de imagem para a fila RabbitMQ"""
+    print("Enviando solicitação de análise de imagem...")
+
+    response = await rabbit_router.broker.request(
+        request, "image_analysis", timeout=300
+    )
+
+    response_dict = response.body
+
+    print(response_dict)
+
+    return response_dict  # type: ignore
