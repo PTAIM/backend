@@ -887,6 +887,62 @@ def atualizar_status_solicitacao(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.delete("/solicitacoes/{solicitacao_id}", tags=["Exames"])
+def delete_solicitacao_exame(
+    solicitacao_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(
+        require_medico
+    ),  # Apenas médicos podem deletar solicitações
+):
+    """
+    Deleta uma solicitação de exame, desde que ela ainda não
+    tenha um resultado associado.
+    """
+
+    # 1. Encontrar a solicitação
+    solicitacao = (
+        db.query(SolicitacaoExame)
+        .filter(
+            SolicitacaoExame.id == solicitacao_id,
+        )
+        .first()
+    )
+
+    if not solicitacao:
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada")
+
+    # 2. Regra de Negócio: Apenas o médico que solicitou pode deletar
+    if solicitacao.medicoSolicitante != current_user.id:  # type: ignore
+        raise HTTPException(
+            status_code=403,
+            detail="Você não tem permissão para deletar esta solicitação",
+        )
+
+    # 3. Regra de Negócio: Não permitir deleção se já houver resultado
+    resultado_associado = (
+        db.query(ResultadoExame)
+        .filter(ResultadoExame.solicitacaoId == solicitacao_id)
+        .first()
+    )
+
+    if resultado_associado:
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível deletar uma solicitação que já possui resultado. Cancele-a se necessário.",
+        )
+
+    # 4. Deletar do DB
+    try:
+        db.delete(solicitacao)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao deletar solicitação: {e}")
+
+    return {"message": "Solicitação de exame excluída com sucesso"}
+
+
 @app.post("/resultados", tags=["Exames"])
 async def enviar_resultado_exame(
     codigo_solicitacao: str = Form(...),
@@ -1141,6 +1197,83 @@ def obter_exame(
         .count()
         > 0,
     }
+
+
+@app.delete("/exames/{resultado_id}", tags=["Exames"])
+def delete_resultado_exame(
+    resultado_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(
+        require_funcionario
+    ),  # Apenas funcionários (que fizeram upload) podem deletar
+):
+    """
+    Deleta um resultado de exame do banco de dados e, em seguida,
+    remove o arquivo físico associado do disco.
+    A deleção é impedida se o exame estiver associado a um laudo.
+    """
+
+    # 1. Encontrar o resultado do exame no DB
+    resultado = (
+        db.query(ResultadoExame).filter(ResultadoExame.id == resultado_id).first()
+    )
+
+    if not resultado:
+        raise HTTPException(status_code=404, detail="Resultado de exame não encontrado")
+
+    # 2. Verificar se este resultado está associado a algum laudo
+    #    Procuramos na tabela de associação LaudoResultado
+    associacao_laudo = (
+        db.query(LaudoResultado)
+        .filter(LaudoResultado.resultadoExameId == resultado_id)
+        .first()
+    )
+
+    if associacao_laudo:
+        # Se a associação existir, proibir a deleção
+        raise HTTPException(
+            status_code=400,  # 400 Bad Request (regra de negócio)
+            detail="Não é possível deletar este exame, pois ele já está associado a um laudo.",
+        )
+
+    # 3. Guardar a URL/caminho do arquivo ANTES de deletar o registro
+    arquivo_url_para_deletar = str(resultado.arquivoUrl)
+    file_path_on_disk = None
+
+    if arquivo_url_para_deletar.startswith(BASE_URL_LOCAL):
+        # Converte a URL (http://.../arq.pdf) no caminho do disco (/app/uploads/.../arq.pdf)
+        filename = arquivo_url_para_deletar.replace(BASE_URL_LOCAL + "/", "")
+        file_path_on_disk = os.path.join(UPLOAD_DIRECTORY_LOCAL, filename)
+
+    # 4. Deletar o registro do banco de dados (A Fonte da Verdade)
+    try:
+        db.delete(resultado)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        # Se o DB falhar, não fazemos nada no arquivo e retornamos o erro
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro ao deletar registro do banco de dados: {e}",
+        )
+
+    # 5. Se a deleção do DB foi bem-sucedida, deletar o arquivo físico
+    if file_path_on_disk:
+        try:
+            file_obj = Path(file_path_on_disk)
+            if file_obj.is_file():  # Verifica se o arquivo existe
+                os.remove(file_path_on_disk)
+            else:
+                print(f"Aviso: Arquivo já não existia no disco: {file_path_on_disk}")
+        except Exception as e:
+            # O registro do DB foi excluído, mas o arquivo falhou ao ser deletado.
+            # Registre este erro para uma futura limpeza.
+            print(
+                f"ERRO CRÍTICO DE LIMPEZA: O registro {resultado_id} foi excluído do DB, "
+                f"mas falha ao deletar o arquivo físico: {file_path_on_disk}. Erro: {e}"
+            )
+
+    return {"message": "Resultado de exame excluído com sucesso"}
 
 
 # Feature 2: Visualização de Prontuário
@@ -1498,6 +1631,49 @@ async def finalizar_laudo(
         return {"message": "Laudo finalizado e registrado no prontuário"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/laudos/{laudo_id}", tags=["Laudos"])
+def delete_laudo(
+    laudo_id: int,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(
+        require_medico
+    ),  # Apenas médicos podem deletar laudos
+):
+    """
+    Deleta um laudo, desde que ele esteja em modo "Rascunho".
+    Laudos finalizados não podem ser deletados.
+    """
+
+    # 1. Encontrar o laudo
+    laudo = db.query(Laudo).filter(Laudo.id == laudo_id).first()
+
+    if not laudo:
+        raise HTTPException(status_code=404, detail="Laudo não encontrado")
+
+    # 2. Regra de Negócio: Apenas o médico que criou pode deletar
+    if laudo.medicoId != current_user.id:  # type: ignore
+        raise HTTPException(
+            status_code=403, detail="Você não tem permissão para deletar este laudo"
+        )
+
+    # 3. Regra de Negócio: Apenas laudos em Rascunho podem ser deletados
+    if laudo.status != StatusLaudo.RASCUNHO:  # type: ignore
+        raise HTTPException(
+            status_code=400,
+            detail="Não é possível deletar um laudo que já foi finalizado.",
+        )
+
+    # 4. Deletar do DB (A relação LaudoResultado deve ter cascade delete no modelo)
+    try:
+        db.delete(laudo)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao deletar laudo: {e}")
+
+    return {"message": "Laudo excluído com sucesso"}
 
 
 # ==========================================
