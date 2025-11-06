@@ -5,6 +5,13 @@ Aplicação: Sistema de Telemedicina
 
 from dotenv import load_dotenv
 
+from app.rabbit.producers import (
+    enviar_email_cadastro_paciente,
+    enviar_email_solicitacao_exame,
+    enviar_laudo_disponivel,
+    enviar_notificacao_exame_disponivel,
+)
+
 # Carrega variáveis de ambiente do arquivo .env
 load_dotenv()
 
@@ -14,7 +21,7 @@ import os
 from datetime import datetime, time, timedelta
 from typing import Optional
 
-# ========== Imports FastAPI/SQLAlchemy ==========
+# ========== Imports FastAPI/SQLAlchemy/FastStream ==========
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
@@ -31,6 +38,7 @@ from app.core.auth_dependencies import (
     require_admin,
     require_funcionario,
 )
+from app.rabbit.broker import rabbit_router
 
 # ========== Imports Schemas ==========
 from app.gestao_perfis.schemas.perfis_schemas import (
@@ -104,6 +112,8 @@ app = FastAPI(
     description="API para sistema de telemedicina com autenticação JWT",
 )
 
+app.include_router(rabbit_router)
+
 # Configurar segurança JWT no Swagger
 security = HTTPBearer()
 
@@ -160,7 +170,7 @@ def cadastrar_usuario(request: CadastroUsuarioRequest, db: Session = Depends(get
 
 
 @app.post("/auth/login", tags=["Autenticação"], response_model=LoginResponse)
-def fazer_login(request: LoginRequest, db: Session = Depends(get_db)):
+async def fazer_login(request: LoginRequest, db: Session = Depends(get_db)):
     """História 1.1: Login de usuário com token JWT"""
     usuario = AuthService.fazer_login(db, request.email, request.senha)
     if not usuario:
@@ -299,7 +309,7 @@ def listar_especialidades(
 
 # Feature 3: Sumário de Saúde do Paciente
 @app.post("/pacientes", tags=["Pacientes"])
-def criar_paciente_completo(
+async def criar_paciente_completo(
     request: CriarPacienteCompletoRequest,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(
@@ -322,6 +332,11 @@ def criar_paciente_completo(
         )
 
         print(senha_gerada)
+        await enviar_email_cadastro_paciente(
+            nome=request.nome,
+            email=request.email,
+            senha_temporaria=senha_gerada,
+        )
 
         return {
             "message": "Paciente cadastrado com sucesso.",
@@ -344,6 +359,7 @@ def criar_perfil_paciente(
         paciente = PacienteService.criar_perfil_paciente(
             db, request.usuario_id, request.data_nascimento, request.endereco
         )
+
         return {"message": "Perfil paciente criado", "paciente_id": paciente.usuarioId}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -672,7 +688,7 @@ def finalizar_consulta(
 
 # Feature 1: Gestão de Exames
 @app.post("/solicitacoes", tags=["Exames"])
-def criar_solicitacao_exame(
+async def criar_solicitacao_exame(
     request: CriarSolicitacaoExameRequest,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(require_medico),
@@ -687,6 +703,20 @@ def criar_solicitacao_exame(
             request.hipotese_diagnostica,
             request.detalhes_preparo,
         )
+
+        paciente: Paciente = PacienteService.buscar_paciente_por_id(
+            db, request.paciente_id
+        )
+
+        await enviar_email_solicitacao_exame(
+            nome_paciente=paciente.usuario.nome,
+            email_paciente=paciente.usuario.email,
+            nome_exame=request.nome_exame,
+            nome_medico=current_user.nome,
+            codigo_solicitacao=solicitacao.codigoSolicitacao,
+            detalhes_preparo=request.detalhes_preparo,
+        )
+
         return {
             "id": solicitacao.id,
             "codigo_solicitacao": solicitacao.codigoSolicitacao,
@@ -789,12 +819,12 @@ def obter_solicitacao(
         "id": solicitacao.id,
         "codigo_solicitacao": solicitacao.codigoSolicitacao,
         "paciente_id": solicitacao.pacienteId,
-        "paciente_nome": solicitacao.paciente.usuario.nome
-        if solicitacao.paciente
-        else None,
-        "paciente_cpf": solicitacao.paciente.usuario.cpf
-        if solicitacao.paciente
-        else None,
+        "paciente_nome": (
+            solicitacao.paciente.usuario.nome if solicitacao.paciente else None
+        ),
+        "paciente_cpf": (
+            solicitacao.paciente.usuario.cpf if solicitacao.paciente else None
+        ),
         "medico_id": solicitacao.medicoSolicitante,
         "medico_nome": solicitacao.medico.usuario.nome if solicitacao.medico else None,
         "medico_crm": solicitacao.medico.crm if solicitacao.medico else None,
@@ -824,7 +854,7 @@ def atualizar_status_solicitacao(
 
 
 @app.post("/resultados", tags=["Exames"])
-def enviar_resultado_exame(
+async def enviar_resultado_exame(
     request: EnviarResultadoExameRequest,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(
@@ -846,6 +876,17 @@ def enviar_resultado_exame(
             arquivo_url,
             nome_arquivo,
             request.observacoes,
+        )
+
+        solicitacao = resultado.solicitacao
+
+        await enviar_notificacao_exame_disponivel(
+            data_realizacao=request.data_realizacao.isoformat(),
+            nome_medico=solicitacao.medico.usuario.nome,
+            nome_paciente=solicitacao.paciente.usuario.nome,
+            email_medico=solicitacao.medico.usuario.email,
+            nome_exame=solicitacao.nomeExame,
+            codigo_solicitacao=request.codigo_solicitacao,
         )
         return {"message": "Resultado enviado", "resultado_id": resultado.id}
     except Exception as e:
@@ -932,19 +973,27 @@ def listar_exames(
                 "solicitacao_id": resultado.solicitacao.id,
                 "codigo_solicitacao": resultado.solicitacao.codigoSolicitacao,
                 "paciente_id": resultado.solicitacao.pacienteId,
-                "paciente_nome": resultado.solicitacao.paciente.usuario.nome
-                if resultado.solicitacao.paciente
-                else None,
-                "paciente_cpf": resultado.solicitacao.paciente.usuario.cpf
-                if resultado.solicitacao.paciente
-                else None,
+                "paciente_nome": (
+                    resultado.solicitacao.paciente.usuario.nome
+                    if resultado.solicitacao.paciente
+                    else None
+                ),
+                "paciente_cpf": (
+                    resultado.solicitacao.paciente.usuario.cpf
+                    if resultado.solicitacao.paciente
+                    else None
+                ),
                 "medico_id": resultado.solicitacao.medicoSolicitante,
-                "medico_nome": resultado.solicitacao.medico.usuario.nome
-                if resultado.solicitacao.medico
-                else None,
-                "medico_crm": resultado.solicitacao.medico.crm
-                if resultado.solicitacao.medico
-                else None,
+                "medico_nome": (
+                    resultado.solicitacao.medico.usuario.nome
+                    if resultado.solicitacao.medico
+                    else None
+                ),
+                "medico_crm": (
+                    resultado.solicitacao.medico.crm
+                    if resultado.solicitacao.medico
+                    else None
+                ),
                 "nome_exame": resultado.solicitacao.nomeExame,
                 "data_realizacao": resultado.dataRealizacao.isoformat(),
                 "data_upload": resultado.dataUpload.isoformat(),
@@ -983,19 +1032,25 @@ def obter_exame(
         "solicitacao_id": resultado.solicitacao.id,
         "codigo_solicitacao": resultado.solicitacao.codigoSolicitacao,
         "paciente_id": resultado.solicitacao.pacienteId,
-        "paciente_nome": resultado.solicitacao.paciente.usuario.nome
-        if resultado.solicitacao.paciente
-        else None,
-        "paciente_cpf": resultado.solicitacao.paciente.usuario.cpf
-        if resultado.solicitacao.paciente
-        else None,
+        "paciente_nome": (
+            resultado.solicitacao.paciente.usuario.nome
+            if resultado.solicitacao.paciente
+            else None
+        ),
+        "paciente_cpf": (
+            resultado.solicitacao.paciente.usuario.cpf
+            if resultado.solicitacao.paciente
+            else None
+        ),
         "medico_id": resultado.solicitacao.medicoSolicitante,
-        "medico_nome": resultado.solicitacao.medico.usuario.nome
-        if resultado.solicitacao.medico
-        else None,
-        "medico_crm": resultado.solicitacao.medico.crm
-        if resultado.solicitacao.medico
-        else None,
+        "medico_nome": (
+            resultado.solicitacao.medico.usuario.nome
+            if resultado.solicitacao.medico
+            else None
+        ),
+        "medico_crm": (
+            resultado.solicitacao.medico.crm if resultado.solicitacao.medico else None
+        ),
         "nome_exame": resultado.solicitacao.nomeExame,
         "data_realizacao": resultado.dataRealizacao.isoformat(),
         "data_upload": resultado.dataUpload.isoformat(),
@@ -1062,7 +1117,7 @@ def obter_historico_completo(paciente_id: int, db: Session = Depends(get_db)):
 
 # Feature 2: Emissão de Laudo Médico
 @app.post("/laudos", tags=["Laudos"])
-def criar_laudo(
+async def criar_laudo(
     request: CriarLaudoRequest,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(require_medico),
@@ -1076,6 +1131,17 @@ def criar_laudo(
             request.titulo,
             request.descricao,
             request.exames_ids,
+        )
+
+        paciente = PacienteService.buscar_paciente_por_id(db, request.paciente_id)
+
+        await enviar_laudo_disponivel(
+            nome_paciente=paciente.usuario.nome,
+            email_paciente=paciente.usuario.email,
+            titulo_laudo=request.titulo,
+            nome_medico=laudo.medico.usuario.nome,
+            crm=laudo.medico.crm,
+            data_emissao=laudo.dataEmissao.isoformat(),
         )
         return {"id": laudo.id, "status": laudo.status.value}
     except Exception as e:
@@ -1233,9 +1299,9 @@ def listar_laudos(
                         "paciente_nome": paciente_info["paciente_nome"],
                         "paciente_cpf": paciente_info["paciente_cpf"],
                         "medico_id": laudo.medicoId,
-                        "medico_nome": laudo.medico.usuario.nome
-                        if laudo.medico
-                        else None,
+                        "medico_nome": (
+                            laudo.medico.usuario.nome if laudo.medico else None
+                        ),
                         "medico_crm": laudo.medico.crm if laudo.medico else None,
                         "titulo": laudo.titulo,
                         "descricao": laudo.descricao,
