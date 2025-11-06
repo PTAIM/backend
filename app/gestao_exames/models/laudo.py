@@ -30,6 +30,7 @@ class Laudo(Base):
 
     id = Column(Integer, primary_key=True)
     medicoId = Column(Integer, ForeignKey("medicos.usuarioId"), nullable=False)
+    pacienteId = Column(Integer, ForeignKey("pacientes.usuarioId"), nullable=False)
     titulo = Column(String, nullable=False)
     descricao = Column(Text, nullable=False)
     status = Column(SQLEnum(StatusLaudo), default=StatusLaudo.RASCUNHO)
@@ -40,6 +41,7 @@ class Laudo(Base):
         "LaudoResultado", back_populates="laudo", cascade="all, delete-orphan"
     )
     medico = relationship("Medico", foreign_keys=[medicoId])
+    paciente = relationship("Paciente", foreign_keys=[pacienteId])
 
     def __repr__(self):
         return f"<Laudo(id={self.id}, medico={self.medicoId}, status={self.status})>"

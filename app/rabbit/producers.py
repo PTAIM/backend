@@ -1,4 +1,5 @@
 from enum import Enum
+import json
 from typing import Any, Dict, Optional
 
 import pydantic
@@ -140,7 +141,7 @@ async def enviar_notificacao_exame_disponivel(
             "data_realizacao": data_realizacao,
             "codigo_solicitacao": codigo_solicitacao,
         },
-        assunto_personalizado="Seu Exame Está Disponível",
+        assunto_personalizado="Novo Exame Disponível Para Laudo",
     )
 
     await rabbit_router.broker.publish(mensagem, EMAIL_QUEUE)
@@ -186,7 +187,9 @@ async def enviar_analise_imagem(request: ImageAnalysisRequest):
         request, "image_analysis", timeout=300
     )
 
-    response_dict = response.body
+    response_string = response.body.decode("utf-8")
+
+    response_dict = json.loads(response_string)
 
     print(response_dict)
 

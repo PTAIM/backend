@@ -1210,16 +1210,6 @@ async def criar_laudo(
             request.exames_ids,
         )
 
-        paciente = PacienteService.buscar_paciente_por_id(db, request.paciente_id)
-
-        await enviar_laudo_disponivel(
-            nome_paciente=paciente.usuario.nome,
-            email_paciente=paciente.usuario.email,
-            titulo_laudo=request.titulo,
-            nome_medico=laudo.medico.usuario.nome,
-            crm=laudo.medico.crm,
-            data_emissao=laudo.dataEmissao.isoformat(),
-        )
         return {"id": laudo.id, "status": laudo.status.value}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1486,7 +1476,7 @@ def atualizar_laudo(
 
 
 @app.post("/laudos/{laudo_id}/finalizar", tags=["Laudos"])
-def finalizar_laudo(
+async def finalizar_laudo(
     laudo_id: int,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(require_medico),
@@ -1494,6 +1484,16 @@ def finalizar_laudo(
     """História 2.1: Finalizar laudo"""
     try:
         laudo = LaudoService.finalizar_laudo(db, laudo_id)
+
+        await enviar_laudo_disponivel(
+            nome_paciente=laudo.paciente.usuario.nome,
+            email_paciente=laudo.paciente.usuario.email,
+            titulo_laudo=laudo.titulo,
+            nome_medico=laudo.medico.usuario.nome,
+            crm=laudo.medico.crm,
+            data_emissao=laudo.dataEmissao.isoformat(),
+        )
+
         return {"message": "Laudo finalizado e registrado no prontuário"}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
