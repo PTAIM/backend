@@ -1,6 +1,7 @@
 """
 Modelo de Resultado de Exame
 """
+
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -19,10 +20,12 @@ class ResultadoExame(Base):
     nomeArquivo = Column(String)
     dataUpload = Column(DateTime, default=datetime.utcnow)
     observacoes = Column(Text)
-    
+
     # Relacionamentos
     solicitacao = relationship("SolicitacaoExame", back_populates="resultados")
-    laudos = relationship("Laudo", back_populates="resultado")
+    laudos = relationship(
+        "LaudoResultado", back_populates="resultado", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<ResultadoExame(id={self.id}, solicitacao={self.solicitacaoId})>"
